@@ -7,6 +7,11 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Add `pydantic` explicitly to `pyproject.toml` dependencies
 - [x] Refactor `src/acpterm/config.py` to use Pydantic for structured configuration
 - [x] Verify the refactoring with linting and type-checking (`just lint typecheck`)
+- [x] Consolidate `_AgentClient` and `_SilentClient` into a single `AgentClient` class in `src/acpterm/acp_agent.py`
+- [x] Implement `ClientCapabilities` advertisement in `initialize` phase (supporting `fs` and `session.configOptions.boolean`)
+- [x] Implement `--read-only` flag in CLI and `read_only` capability constraint in agent runner
+- [x] Fix the `False` value serialization bug in `agent_cache.py`
+- [x] Document `--read-only` flag and capabilities in `README.md`
 
 ## 🛠️ Configuration Redesign
 

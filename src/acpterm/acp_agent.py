@@ -32,11 +32,18 @@ def _debug_log(verbose: bool, label: str, resp: Any) -> None:
     _console.print("[dim]---[/dim]\n")
 
 
-class _AgentClient:
+class AgentClient:
     """Implements the ACP `Client` protocol to receive session updates from the agent."""
 
-    def __init__(self, auto_approve: bool = False) -> None:
+    def __init__(
+        self,
+        auto_approve: bool = False,
+        silent: bool = False,
+        read_only: bool = False,
+    ) -> None:
         self._auto_approve = auto_approve
+        self._silent = silent
+        self._read_only = read_only
 
     def on_connect(self, conn: Any) -> None:
         pass
@@ -47,7 +54,8 @@ class _AgentClient:
         update: Any,
         **kwargs: Any,
     ) -> None:
-        format_session_update(session_id, update)
+        if not self._silent:
+            format_session_update(session_id, update)
 
     async def request_permission(
         self,
@@ -60,10 +68,12 @@ class _AgentClient:
         kind = getattr(tool_call, "kind", None)
         kind_str = getattr(kind, "value", str(kind)) if kind else "unknown"
 
-        _console.print(f"\n[yellow][perm][/yellow] {title} [dim]({kind_str})[/dim]")
+        if not self._silent:
+            _console.print(f"\n[yellow][perm][/yellow] {title} [dim]({kind_str})[/dim]")
 
-        if self._auto_approve:
-            _console.print("[dim]  Auto-approved (--yes)[/dim]")
+        if self._silent or self._auto_approve:
+            if not self._silent:
+                _console.print("[dim]  Auto-approved (--yes)[/dim]")
             option_id = options[0].option_id if options else "allow_always"
             return acp_schema.RequestPermissionResponse(
                 outcome=acp_schema.AllowedOutcome(
@@ -88,8 +98,11 @@ class _AgentClient:
     async def write_text_file(
         self, session_id: str, path: str, content: str, **kwargs: Any
     ) -> acp_schema.WriteTextFileResponse:
-        file_path = Path(path)
-        file_path.write_text(content)
+        if self._read_only:
+            raise RuntimeError("File modifications are disabled in read-only mode")
+        if not self._silent:
+            file_path = Path(path)
+            file_path.write_text(content)
         return acp_schema.WriteTextFileResponse()
 
     async def read_text_file(
@@ -100,6 +113,8 @@ class _AgentClient:
         limit: int | None = None,
         **kwargs: Any,
     ) -> acp_schema.ReadTextFileResponse:
+        if self._silent:
+            return acp_schema.ReadTextFileResponse(content="")
         file_path = Path(path)
         text = file_path.read_text()
         lines = text.splitlines()
@@ -166,12 +181,14 @@ class ACPAgent:
         session_name: str = "default",
         auto_approve: bool = False,
         verbose: bool = False,
+        read_only: bool = False,
     ) -> None:
         self.project_root_path = project_root
         self.agent_binary = agent_binary
         self.session_name = session_name
         self._auto_approve = auto_approve
         self._verbose = verbose
+        self._read_only = read_only
 
         self._conn: ClientSideConnection | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -181,7 +198,22 @@ class ACPAgent:
     async def start(
         self, target: str | None = None, *, load_existing: bool = True
     ) -> None:
-        client = _AgentClient(auto_approve=self._auto_approve)
+        capabilities = acp_schema.ClientCapabilities(
+            fs=acp_schema.FileSystemCapabilities(
+                read_text_file=True,
+                write_text_file=not self._read_only,
+            ),
+            session=acp_schema.ClientSessionCapabilities(
+                config_options=acp_schema.SessionConfigOptionsCapabilities(
+                    boolean=acp_schema.BooleanConfigOptionCapabilities()
+                )
+            ),
+        )
+
+        client = AgentClient(
+            auto_approve=self._auto_approve,
+            read_only=self._read_only,
+        )
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
         reader, writer, self._process = await self._transport_ctx.__aenter__()  # type: ignore[func-returns-value]
@@ -189,7 +221,10 @@ class ACPAgent:
         self._conn = ClientSideConnection(client, writer, reader)
 
         cwd = str(self.project_root_path.absolute())
-        init_resp = await self._conn.initialize(protocol_version=PROTOCOL_VERSION)
+        init_resp = await self._conn.initialize(
+            protocol_version=PROTOCOL_VERSION,
+            client_capabilities=capabilities,
+        )
         _debug_log(self._verbose, "initialize", init_resp)
 
         if target is None and load_existing:

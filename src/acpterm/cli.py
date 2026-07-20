@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .acp_agent import ACPAgent
+from .acp_agent import ACPAgent, AgentClient
 from . import agent_cache
 from . import session_store
 
@@ -41,12 +41,16 @@ def callback(
     verbose: Annotated[
         bool, typer.Option("-v", "--verbose", help="Show raw agent JSON-RPC responses")
     ] = False,
+    read_only: Annotated[
+        bool, typer.Option("--read-only", help="Run agent in read-only mode (disables file modifications)")
+    ] = False,
 ) -> None:
     ctx.ensure_object(dict)
     ctx.obj["agent"] = agent
     ctx.obj["session_name"] = session or "default"
     ctx.obj["auto_yes"] = auto_yes
     ctx.obj["verbose"] = verbose
+    ctx.obj["read_only"] = read_only
 
 
 async def _run_prompt(
@@ -57,6 +61,7 @@ async def _run_prompt(
     target_session_id: str | None = None,
     persist: bool = False,
     verbose: bool = False,
+    read_only: bool = False,
 ) -> None:
     project_root = Path.cwd()
     agent = ACPAgent(
@@ -65,6 +70,7 @@ async def _run_prompt(
         session_name=session_name,
         auto_approve=auto_yes,
         verbose=verbose,
+        read_only=read_only,
     )
     await agent.start(target=target_session_id, load_existing=persist)
     try:
@@ -101,97 +107,7 @@ async def _create_session(
         await agent_obj.stop()
 
 
-class _SilentClient:
-    """No-op ACP Client for fetching config without output."""
 
-    def on_connect(self, conn: Any) -> None:  # noqa: ARG002
-        pass
-
-    async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:  # noqa: ARG002
-        pass
-
-    async def request_permission(
-        self, session_id: str, tool_call: Any, options: list[Any], **kwargs: Any
-    ) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.RequestPermissionResponse(
-            outcome=acp_schema.AllowedOutcome(
-                outcome="selected",
-                option_id=options[0].option_id if options else "allow_always",
-            )  # type: ignore[union-attr]
-        )
-
-    async def write_text_file(
-        self, session_id: str, path: str, content: str, **kwargs: Any
-    ) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.WriteTextFileResponse()
-
-    async def read_text_file(
-        self,
-        session_id: str,
-        path: str,
-        line: int | None = None,
-        limit: int | None = None,
-        **kwargs: Any,
-    ) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.ReadTextFileResponse(content="")
-
-    async def create_terminal(
-        self,
-        session_id: str,
-        command: str,
-        args: list[str] | None = None,
-        env: list[Any] | None = None,
-        cwd: str | None = None,
-        output_byte_limit: int | None = None,
-        **kwargs: Any,
-    ) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.CreateTerminalResponse(terminal_id="t")
-
-    async def terminal_output(
-        self, session_id: str, terminal_id: str, **kwargs: Any
-    ) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.TerminalOutputResponse(output="", truncated=False)
-
-    async def release_terminal(
-        self, session_id: str, terminal_id: str, **kwargs: Any
-    ) -> Any:  # noqa: ARG002
-        pass
-
-    async def wait_for_terminal_exit(
-        self, session_id: str, terminal_id: str, **kwargs: Any
-    ) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.WaitForTerminalExitResponse(exit_code=0)
-
-    async def kill_terminal(
-        self, session_id: str, terminal_id: str, **kwargs: Any
-    ) -> Any:  # noqa: ARG002
-        pass
-
-    async def create_elicitation(self, message: str, mode: Any, **kwargs: Any) -> Any:  # noqa: ARG002
-        from acp import schema as acp_schema  # noqa: PLC0415
-
-        return acp_schema.DeclineElicitationResponse(action="decline")
-
-    async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:  # noqa: ARG002
-        pass
-
-    async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG002
-        return {}
-
-    async def ext_notification(self, method: str, params: dict[str, Any]) -> None:  # noqa: ARG002
-        pass
 
 
 async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) -> None:
@@ -201,13 +117,26 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
     from .config import resolve_agent_command
     from acp.transports import spawn_stdio_transport
 
+    from acp import schema as acp_schema
+    capabilities = acp_schema.ClientCapabilities(
+        fs=acp_schema.FileSystemCapabilities(
+            read_text_file=True,
+            write_text_file=True,
+        ),
+        session=acp_schema.ClientSessionCapabilities(
+            config_options=acp_schema.SessionConfigOptionsCapabilities(
+                boolean=acp_schema.BooleanConfigOptionCapabilities()
+            )
+        ),
+    )
+
     cmd = resolve_agent_command(agent_binary)
     transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
     reader, writer, _process = await transport_ctx.__aenter__()  # type: ignore[func-returns-value]
-    conn = ClientSideConnection(_SilentClient(), writer, reader)
+    conn = ClientSideConnection(AgentClient(silent=True), writer, reader)
     try:
         cwd = str(Path.cwd().absolute())
-        await conn.initialize(protocol_version=1)
+        await conn.initialize(protocol_version=1, client_capabilities=capabilities)
         resp = await conn.new_session(cwd=cwd)
         if verbose:
             _console.print("[dim]--- new_session response ---[/dim]")
@@ -289,6 +218,7 @@ def new(
         agent_binary=agent_binary,
         session_name=session_name,
         verbose=ctx.obj.get("verbose", False),
+        read_only=ctx.obj.get("read_only", False),
     )
     _run_async(_create_session(agent_obj, project_root, agent_binary, session_name))
 
@@ -379,6 +309,7 @@ def prompt(
             auto_yes=ctx.obj["auto_yes"],
             persist=True,
             verbose=ctx.obj.get("verbose", False),
+            read_only=ctx.obj.get("read_only", False),
         )
     )
 
@@ -397,6 +328,7 @@ def exec(
             auto_yes=ctx.obj["auto_yes"],
             persist=False,
             verbose=ctx.obj.get("verbose", False),
+            read_only=ctx.obj.get("read_only", False),
         )
     )
 

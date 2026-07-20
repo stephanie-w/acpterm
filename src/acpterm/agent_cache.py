@@ -54,12 +54,15 @@ def store(agent_name: str, config_options: Any, modes: Any) -> None:
     co_list: list[dict[str, Any]] = []
     if config_options:
         for opt in config_options:
+            val = getattr(opt, "current_value", None)
+            if val is None:
+                val = getattr(opt, "currentValue", None)
             co_list.append(
                 {
                     "id": getattr(opt, "id", None),
                     "name": getattr(opt, "name", None),
-                    "current_value": getattr(opt, "current_value", None)
-                    or getattr(opt, "currentValue", None),
+                    "type": getattr(opt, "type", None),
+                    "current_value": val,
                     "options": _serialize_select_options(opt),
                 }
             )

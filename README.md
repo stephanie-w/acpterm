@@ -43,6 +43,7 @@ acpterm [OPTIONS] COMMAND [ARGS]...
 | `-a, --agent <name>` | ACP agent binary to spawn (default: `opencode`) |
 | `-s, --session <name>` | Session name for `prompt` (default: `default`) |
 | `-y, --yes` | Auto-approve all permission requests without prompting |
+| `--read-only` | Run the agent in read-only mode (disables file modifications) |
 
 ### Commands
 
@@ -107,8 +108,19 @@ $ acpterm -a opencode prompt "find the flaky test and fix it"
 Fixed: added `await` to the setup hook in checkout.submit. The test was
 reading stale state from the previous run.
 
-[done] end_turn
 ```
+
+## Read-Only Mode
+
+You can run agents in read-only mode by passing the `--read-only` flag globally:
+
+```bash
+acpterm --read-only exec "analyze the entry point and list its dependencies"
+```
+
+In read-only mode:
+- The client advertises `writeTextFile: false` capability during the initial connection handshake. Compliant agents will automatically disable file-writing tools.
+- If the agent attempts to call a write operation regardless, the client intercepts and blocks it, raising a runtime error to protect your codebase from any modifications.
 
 ## Session Storage
 
