@@ -17,6 +17,8 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Add model lists to Pydantic configuration class in `src/acpterm/config.py`
 - [x] Implement `acpterm models set <model_id>` CLI command in `src/acpterm/cli.py`
 - [x] Add config-based fallback to `acpterm models list` rendering in `src/acpterm/cli.py`
+- [x] Implement stdin prompt piping (`echo "..." | acpterm prompt`)
+- [x] Implement file-based prompt input via `--file / -f` option
 
 ## 🛠️ Configuration Redesign
 

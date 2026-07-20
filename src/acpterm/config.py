@@ -12,6 +12,7 @@ class Config(BaseModel):
 
     agents: dict[str, str] = Field(default_factory=dict)
     agent_models: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
+    max_prompt_chars: int = Field(default=100000)
 
     @classmethod
     def load(cls) -> Config:

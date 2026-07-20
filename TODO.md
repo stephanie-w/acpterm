@@ -3,8 +3,8 @@
 ## Next
 
 ### Piping & File Input
-- [ ] `echo '...' | acpterm -a <agent> prompt` — prompt from stdin
-- [ ] `acpterm -a <agent> prompt --file prompt.md` — prompt from file
+- [x] `echo '...' | acpterm -a <agent> prompt` — prompt from stdin
+- [x] `acpterm -a <agent> prompt --file prompt.md` — prompt from file
 
 ### Verbose / Debug
 - [x] `-v/--verbose` logs initialize, new_session/load_session, and prompt JSON responses

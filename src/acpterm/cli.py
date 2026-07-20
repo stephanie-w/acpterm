@@ -423,15 +423,65 @@ def close_session(
 # ── top-level commands ────────────────────────────────────────────────────────
 
 
+def _resolve_prompt_text(prompt: list[str] | None, file: Path | None) -> str:
+    import sys
+
+    parts: list[str] = []
+
+    # 1. Read from file/stdin if --file is specified
+    if file is not None:
+        if str(file) == "-":
+            parts.append(sys.stdin.read())
+        else:
+            if not file.exists():
+                raise typer.BadParameter(f"File not found: {file}")
+            parts.append(file.read_text(encoding="utf-8"))
+    # 2. Otherwise read from stdin if input is piped and prompt is empty
+    elif not prompt and not sys.stdin.isatty():
+        parts.append(sys.stdin.read())
+
+    # 3. Append positional prompt arguments if any
+    if prompt:
+        parts.append(" ".join(prompt))
+
+    # 4. If we have nothing resolved, raise error
+    resolved = "\n".join(parts).strip()
+    if not resolved:
+        raise typer.BadParameter(
+            "Error: Missing prompt text. Please provide a prompt argument, use --file, or pipe input."
+        )
+
+    # 5. Configurable prompt size guardrail
+    from .config import Config
+
+    config = Config.load()
+    limit = config.max_prompt_chars
+
+    if len(resolved) > limit:
+        msg = f"Warning: The prompt size ({len(resolved):,} characters) exceeds the limit of {limit:,} characters."
+        if sys.stdin.isatty():
+            if not typer.confirm(f"{msg} Do you want to send it anyway?"):
+                raise typer.Abort()
+        else:
+            raise typer.BadParameter(
+                f"{msg}\nTo allow larger prompts, increase 'max_prompt_chars' in your ~/.acpterm/config.json."
+            )
+
+    return resolved
+
+
 @app.command()
 def prompt(
     ctx: typer.Context,
     prompt: Annotated[
-        list[str], typer.Argument(help="Prompt text to send to the agent")
-    ],
+        list[str] | None, typer.Argument(help="Prompt text to send to the agent")
+    ] = None,
+    file: Annotated[
+        Path | None, typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)")
+    ] = None,
 ) -> None:
     """Send a prompt to the agent (saves session for subsequent prompts)."""
-    prompt_text = " ".join(prompt)
+    prompt_text = _resolve_prompt_text(prompt, file)
     _run_async(
         _run_prompt(
             agent_binary=ctx.obj["agent"],
@@ -448,10 +498,15 @@ def prompt(
 @app.command()
 def exec(
     ctx: typer.Context,
-    prompt: Annotated[list[str], typer.Argument(help="Prompt text (one-shot)")],
+    prompt: Annotated[
+        list[str] | None, typer.Argument(help="Prompt text (one-shot)")
+    ] = None,
+    file: Annotated[
+        Path | None, typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)")
+    ] = None,
 ) -> None:
     """One-shot prompt (no session persistence)."""
-    prompt_text = " ".join(prompt)
+    prompt_text = _resolve_prompt_text(prompt, file)
     _run_async(
         _run_prompt(
             agent_binary=ctx.obj["agent"],
