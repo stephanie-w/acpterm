@@ -288,14 +288,23 @@ class ACPAgent:
 
     async def close_session(self) -> None:
         if self._conn is not None and self._session_id is not None:
-            await self._conn.close_session(session_id=self._session_id)
+            try:
+                await self._conn.close_session(session_id=self._session_id)
+            except Exception:
+                pass
 
     async def stop(self) -> None:
         if self._conn:
-            await self._conn.close()
+            try:
+                await self._conn.close()
+            except Exception:
+                pass
             self._conn = None
         if self._transport_ctx:
-            await self._transport_ctx.__aexit__(None, None, None)
+            try:
+                await self._transport_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
             self._transport_ctx = None
         self._process = None
         self._session_id = None

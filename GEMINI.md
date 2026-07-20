@@ -12,6 +12,8 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Implement `--read-only` flag in CLI and `read_only` capability constraint in agent runner
 - [x] Fix the `False` value serialization bug in `agent_cache.py`
 - [x] Document `--read-only` flag and capabilities in `README.md`
+- [x] Make `ACPAgent.stop()` robust against cleanup exceptions
+- [x] Implement actual agent session closure in `sessions close` CLI command
 
 ## 🛠️ Configuration Redesign
 

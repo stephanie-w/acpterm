@@ -271,6 +271,34 @@ def show_session(
     _console.print(f"  ID:        {entry.get('session_id')}")
 
 
+async def _close_session_on_agent(
+    agent_binary: str,
+    cwd: str,
+    session_name: str,
+    verbose: bool = False,
+) -> bool:
+    entry = session_store.get_entry(agent_binary, cwd, session_name)
+    if not entry:
+        return False
+    session_id = entry.get("session_id")
+    if session_id:
+        agent_obj = ACPAgent(
+            project_root=Path(cwd),
+            agent_binary=agent_binary,
+            session_name=session_name,
+            verbose=verbose,
+        )
+        try:
+            await agent_obj.start(target=session_id, load_existing=True)
+            await agent_obj.close_session()
+        except Exception:
+            pass
+        finally:
+            await agent_obj.stop()
+    session_store.remove(agent_binary, cwd, session_name)
+    return True
+
+
 @sessions_app.command(name="close")
 def close_session(
     ctx: typer.Context,
@@ -278,13 +306,22 @@ def close_session(
         str | None, typer.Argument(help="Session name (defaults to current)")
     ] = None,
 ) -> None:
-    """Remove a saved session from the local store."""
+    """Close a session (notifies the agent and removes local metadata)."""
     agent_binary = ctx.obj["agent"]
     session_name = name or ctx.obj["session_name"]
     cwd = str(Path.cwd().absolute())
-    removed = session_store.remove(agent_binary, cwd, session_name)
+    verbose = ctx.obj.get("verbose", False)
+
+    removed = False
+
+    async def run() -> None:
+        nonlocal removed
+        removed = await _close_session_on_agent(agent_binary, cwd, session_name, verbose)
+
+    _run_async(run())
+
     if removed:
-        typer.echo(f"Session '{session_name}' removed.")
+        typer.echo(f"Session '{session_name}' closed and removed.")
     else:
         typer.echo(f"Session '{session_name}' not found for {agent_binary} in {cwd}")
 
