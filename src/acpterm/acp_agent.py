@@ -249,15 +249,41 @@ class ACPAgent:
         if not self._silent and session_resp:
             display_initial_session_info(session_resp)
 
-    async def send_prompt(self, prompt: str) -> str | None:
+    async def send_prompt(
+        self, prompt: str, resources: list[Path] | None = None
+    ) -> str | None:
         if self._conn is None or self._session_id is None:
             raise RuntimeError("Agent not started")
 
-        from acp import text_block
+        from acp import text_block, resource_link_block
+        from acp.schema import (
+            TextContentBlock,
+            ImageContentBlock,
+            AudioContentBlock,
+            ResourceContentBlock,
+            EmbeddedResourceContentBlock,
+        )
+
+        blocks: list[
+            TextContentBlock
+            | ImageContentBlock
+            | AudioContentBlock
+            | ResourceContentBlock
+            | EmbeddedResourceContentBlock
+        ] = [text_block(prompt)]
+        if resources:
+            for r_path in resources:
+                blocks.append(
+                    resource_link_block(
+                        name=r_path.name,
+                        uri=f"file://{r_path.absolute()}",
+                        size=r_path.stat().st_size if r_path.exists() else None,
+                    )
+                )
 
         resp = await self._conn.prompt(
             self._session_id,
-            [text_block(prompt)],
+            blocks,
         )
         _debug_log(self._verbose, "prompt", resp)
         stop_reason = str(resp.stop_reason)

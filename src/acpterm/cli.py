@@ -62,6 +62,7 @@ async def _run_prompt(
     persist: bool = False,
     verbose: bool = False,
     read_only: bool = False,
+    resources: list[Path] | None = None,
 ) -> None:
     project_root = Path.cwd()
     agent = ACPAgent(
@@ -74,7 +75,7 @@ async def _run_prompt(
     )
     await agent.start(target=target_session_id, load_existing=persist)
     try:
-        await agent.send_prompt(prompt_text)
+        await agent.send_prompt(prompt_text, resources=resources)
         if persist and agent.session_id:
             session_store.save(
                 agent_binary,
@@ -479,6 +480,18 @@ def prompt(
     file: Annotated[
         Path | None, typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)")
     ] = None,
+    resource: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--resource",
+            "-r",
+            help="Attach resource files (supports tab-completion)",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
 ) -> None:
     """Send a prompt to the agent (saves session for subsequent prompts)."""
     prompt_text = _resolve_prompt_text(prompt, file)
@@ -491,6 +504,7 @@ def prompt(
             persist=True,
             verbose=ctx.obj.get("verbose", False),
             read_only=ctx.obj.get("read_only", False),
+            resources=resource,
         )
     )
 
@@ -504,6 +518,18 @@ def exec(
     file: Annotated[
         Path | None, typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)")
     ] = None,
+    resource: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--resource",
+            "-r",
+            help="Attach resource files (supports tab-completion)",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
 ) -> None:
     """One-shot prompt (no session persistence)."""
     prompt_text = _resolve_prompt_text(prompt, file)
@@ -515,6 +541,7 @@ def exec(
             persist=False,
             verbose=ctx.obj.get("verbose", False),
             read_only=ctx.obj.get("read_only", False),
+            resources=resource,
         )
     )
 
