@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from .config import resolve_agent_command
-from .output import format_session_update, format_stop_reason
+from .output import format_session_update, format_stop_reason, display_initial_session_info
 from .session_store import get as get_saved_session
 
 PROTOCOL_VERSION = 1
@@ -182,6 +182,7 @@ class ACPAgent:
         auto_approve: bool = False,
         verbose: bool = False,
         read_only: bool = False,
+        silent: bool = False,
     ) -> None:
         self.project_root_path = project_root
         self.agent_binary = agent_binary
@@ -189,6 +190,7 @@ class ACPAgent:
         self._auto_approve = auto_approve
         self._verbose = verbose
         self._read_only = read_only
+        self._silent = silent
 
         self._conn: ClientSideConnection | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -213,6 +215,7 @@ class ACPAgent:
         client = AgentClient(
             auto_approve=self._auto_approve,
             read_only=self._read_only,
+            silent=self._silent,
         )
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
@@ -243,6 +246,8 @@ class ACPAgent:
         _debug_log(
             self._verbose, "load_session" if target else "new_session", session_resp
         )
+        if not self._silent and session_resp:
+            display_initial_session_info(session_resp)
 
     async def send_prompt(self, prompt: str) -> str | None:
         if self._conn is None or self._session_id is None:

@@ -202,6 +202,42 @@ def format_session_update(
                         break
 
 
+def display_initial_session_info(session_response: Any) -> None:
+    """Print initial model and mode information from the session load/new response."""
+    # Print mode if present
+    current_mode_id = getattr(session_response, "current_mode_id", None) or getattr(
+        session_response, "currentModeId", None
+    )
+    if current_mode_id and not _state._mode_displayed:
+        _state._mode_displayed = True
+        _console.print(f"{_tag('mode', 'dim')} {current_mode_id}")
+
+    # Print model if present in configOptions
+    config_options = getattr(session_response, "config_options", None) or getattr(
+        session_response, "configOptions", None
+    )
+    if config_options:
+        for opt in config_options:
+            if getattr(opt, "id", None) == "model":
+                model = getattr(opt, "current_value", None) or getattr(
+                    opt, "currentValue", None
+                )
+                if model and not _state._model_displayed:
+                    _state._model_displayed = True
+                    _console.print(f"{_tag('model', 'dim')} {model}")
+                break
+
+    # Support metadata fallback for opencode
+    meta = getattr(session_response, "_meta", None) or getattr(
+        session_response, "meta", None
+    )
+    if meta and isinstance(meta, dict):
+        opencode = meta.get("opencode")
+        if isinstance(opencode, dict):
+            model = opencode.get("modelId") or opencode.get("model_id")
+            if model and not _state._model_displayed:
+                _state._model_displayed = True
+                _console.print(f"{_tag('model', 'dim')} {model}")
 def format_stop_reason(stop_reason: str) -> None:
     _state.end_stream()
     _state.flush_md()

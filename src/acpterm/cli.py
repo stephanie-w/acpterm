@@ -180,16 +180,35 @@ def list_models(
 
     config_options = agent_cache.get_config_options(agent_binary) or []
 
+    # Find standard model option in cached config options
+    model_opt: dict[str, Any] | None = None
+    for opt in config_options:
+        if opt.get("id") == "model":
+            model_opt = opt
+            break
+
+    # If not found in cache, construct fallback list from configuration/defaults
+    if not model_opt:
+        from .config import Config
+
+        config = Config.load()
+        fallback_models = config.get_agent_models(agent_binary)
+        if fallback_models:
+            model_opt = {
+                "id": "model",
+                "current_value": "",
+                "options": [{"id": m["id"], "name": m["name"]} for m in fallback_models],
+            }
+
     table = Table(title=f"Models — {agent_binary}")
     table.add_column("")
     table.add_column("Name", style="bold")
     table.add_column("ID")
 
-    for opt in config_options:
-        if opt["id"] != "model":
-            continue
-        current = opt.get("current_value", "")
-        for o in opt.get("options", []):
+    if model_opt:
+        current = model_opt.get("current_value", "")
+        opts: list[dict[str, Any]] = model_opt.get("options", [])
+        for o in opts:
             star = "★" if o["id"] == current else " "
             table.add_row(star, o["name"], o["id"])
 
@@ -197,6 +216,79 @@ def list_models(
         _console.print("[dim]No model information available[/dim]")
         return
     _console.print(table)
+
+
+async def _set_model_on_agent(
+    agent_binary: str,
+    cwd: str,
+    session_name: str,
+    model_id: str,
+    verbose: bool = False,
+) -> bool | None:
+    entry = session_store.get_entry(agent_binary, cwd, session_name)
+    if not entry:
+        return None
+    session_id = entry.get("session_id")
+    if not session_id:
+        return None
+
+    agent_obj = ACPAgent(
+        project_root=Path(cwd),
+        agent_binary=agent_binary,
+        session_name=session_name,
+        verbose=verbose,
+        silent=True,
+    )
+    try:
+        await agent_obj.start(target=session_id, load_existing=True)
+        await agent_obj.set_model(model_id)
+        # Update cache to keep track of current model selection
+        agent_cache.update_model(agent_binary, model_id)
+    except Exception as e:
+        if "session/set_config_option" in str(e):
+            typer.echo(
+                f"Error: Agent '{agent_binary}' does not support changing configuration options via the standard protocol (method not found: session/set_config_option).",
+                err=True,
+            )
+        else:
+            typer.echo(f"Error setting model: {e}", err=True)
+        return False
+    finally:
+        await agent_obj.stop()
+    return True
+
+
+@models_app.command(name="set")
+def set_model(
+    ctx: typer.Context,
+    model_id: Annotated[str, typer.Argument(help="Model ID to select")],
+) -> None:
+    """Set the active model for the current session."""
+    agent_binary = ctx.obj["agent"]
+    session_name = ctx.obj["session_name"]
+    cwd = str(Path.cwd().absolute())
+    verbose = ctx.obj.get("verbose", False)
+
+    success: bool | None = None
+
+    async def run() -> None:
+        nonlocal success
+        success = await _set_model_on_agent(
+            agent_binary, cwd, session_name, model_id, verbose
+        )
+
+    _run_async(run())
+
+    if success is None:
+        typer.echo(
+            f"Active session '{session_name}' not found for {agent_binary} in {cwd}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    elif not success:
+        raise typer.Exit(code=1)
+    else:
+        typer.echo(f"Model set to '{model_id}' for session '{session_name}'.")
 
 
 # ── sessions ──────────────────────────────────────────────────────────────────
@@ -219,6 +311,7 @@ def new(
         session_name=session_name,
         verbose=ctx.obj.get("verbose", False),
         read_only=ctx.obj.get("read_only", False),
+        silent=True,
     )
     _run_async(_create_session(agent_obj, project_root, agent_binary, session_name))
 
@@ -287,6 +380,7 @@ async def _close_session_on_agent(
             agent_binary=agent_binary,
             session_name=session_name,
             verbose=verbose,
+            silent=True,
         )
         try:
             await agent_obj.start(target=session_id, load_existing=True)

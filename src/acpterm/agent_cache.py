@@ -94,6 +94,19 @@ def store(agent_name: str, config_options: Any, modes: Any) -> None:
     _write(data)
 
 
+def update_model(agent_name: str, model_id: str) -> None:
+    """Update the cached current model value for an agent."""
+    data = _read()
+    entry = data.get(agent_name)
+    if entry:
+        config_options = entry.get("config_options", [])
+        for opt in config_options:
+            if opt.get("id") == "model":
+                opt["current_value"] = model_id
+                break
+        _write(data)
+
+
 def _serialize_select_options(opt: Any) -> list[dict[str, str]]:
     options = getattr(opt, "options", None)
     if not options:

@@ -14,6 +14,9 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Document `--read-only` flag and capabilities in `README.md`
 - [x] Make `ACPAgent.stop()` robust against cleanup exceptions
 - [x] Implement actual agent session closure in `sessions close` CLI command
+- [x] Add model lists to Pydantic configuration class in `src/acpterm/config.py`
+- [x] Implement `acpterm models set <model_id>` CLI command in `src/acpterm/cli.py`
+- [x] Add config-based fallback to `acpterm models list` rendering in `src/acpterm/cli.py`
 
 ## 🛠️ Configuration Redesign
 
