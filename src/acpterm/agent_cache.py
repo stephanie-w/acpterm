@@ -92,6 +92,7 @@ def store(
                     {
                         "id": getattr(m, "id", None),
                         "name": getattr(m, "name", None),
+                        "description": getattr(m, "description", None),
                     }
                 )
         mode_dict = {"current_mode_id": current, "available_modes": available_list}

@@ -414,13 +414,16 @@ def list_modes(
     table.add_column("")
     table.add_column("Name", style="bold")
     table.add_column("ID")
+    table.add_column("description", style="dim")
 
     if modes:
         current = modes.get("current_mode_id", "")
         available: list[dict[str, Any]] = modes.get("available_modes", [])
         for m in available:
             star = "★" if m["id"] == current else " "
-            table.add_row(star, m.get("name", m["id"]), m["id"])
+            table.add_row(
+                star, m.get("name", m["id"]), m["id"], m.get("description") or ""
+            )
 
     if not table.row_count:
         _console.print("[dim]No mode information available[/dim]")
