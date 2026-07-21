@@ -13,6 +13,7 @@ class Config(BaseModel):
     agents: dict[str, str] = Field(default_factory=dict)
     agent_models: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
     default_models: dict[str, str] = Field(default_factory=dict)
+    default_modes: dict[str, str] = Field(default_factory=dict)
     max_prompt_chars: int = Field(default=100000)
 
     def get_default_model(self, agent_name: str) -> str | None:
@@ -22,6 +23,15 @@ class Config(BaseModel):
     def set_default_model(self, agent_name: str, model_id: str) -> None:
         """Set the default model for the agent and save the config."""
         self.default_models[agent_name] = model_id
+        self.save()
+
+    def get_default_mode(self, agent_name: str) -> str | None:
+        """Get the configured default mode for the agent."""
+        return self.default_modes.get(agent_name)
+
+    def set_default_mode(self, agent_name: str, mode_id: str) -> None:
+        """Set the default mode for the agent and save the config."""
+        self.default_modes[agent_name] = mode_id
         self.save()
 
     @classmethod

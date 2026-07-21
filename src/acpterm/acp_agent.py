@@ -288,6 +288,7 @@ class ACPAgent:
         *,
         load_existing: bool = True,
         model_override: str | None = None,
+        mode_override: str | None = None,
     ) -> None:
         capabilities = acp_schema.ClientCapabilities(
             fs=acp_schema.FileSystemCapabilities(
@@ -363,6 +364,26 @@ class ACPAgent:
                     _console.print(
                         f"[yellow]Warning: Failed to auto-set model"
                         f" '{model_to_set}': {e}[/yellow]"
+                    )
+
+        # Apply mode override or config-defined default mode if set
+        mode_to_set = mode_override
+        if not mode_to_set:
+            try:
+                config = Config.load()
+                mode_to_set = config.get_default_mode(self.agent_binary)
+            except Exception:
+                pass
+
+        if mode_to_set:
+            try:
+                await self.set_mode(mode_to_set)
+            except Exception as e:
+                # Do not fail start if setting the mode fails (e.g. unsupported option/method)
+                if not self._silent:
+                    _console.print(
+                        f"[yellow]Warning: Failed to auto-set mode"
+                        f" '{mode_to_set}': {e}[/yellow]"
                     )
 
     async def send_prompt(
