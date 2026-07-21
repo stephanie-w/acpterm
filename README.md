@@ -42,6 +42,7 @@ acpterm [OPTIONS] COMMAND [ARGS]...
 |------|-------------|
 | `-a, --agent <name>` | ACP agent binary to spawn (default: `opencode`) |
 | `-s, --session <name>` | Session name for `prompt` (default: `default`) |
+| `-m, --model <id>` | Override or set the active model for the session |
 | `-y, --yes` | Auto-approve all permission requests without prompting |
 | `--read-only` | Run the agent in read-only mode (disables file modifications) |
 
@@ -110,6 +111,30 @@ $ acpterm -a opencode prompt "find the flaky test and fix it"
 Fixed: added `await` to the setup hook in checkout.submit. The test was
 reading stale state from the previous run.
 
+```
+
+## Model Selection & Default Models
+
+You can customize the LLM model used by the agent in two ways:
+
+1. **Temporary Override**: Pass the global `-m` / `--model` option to use a specific model for the current command:
+   ```bash
+   acpterm -m gemini-2.5-flash exec "explain this project"
+   ```
+
+2. **Persistent Default**: Set the default model for an agent using the `models set` command. This updates your configuration file so future sessions automatically run with it:
+   ```bash
+   acpterm models set gemini-2.5-pro
+   ```
+
+Model preferences are saved per-agent in `~/.acpterm/config.json` under the `default_models` key:
+```json
+{
+  "default_models": {
+    "opencode": "gemini-2.5-pro",
+    "kiro": "kiro-large"
+  }
+}
 ```
 
 ## Read-Only Mode

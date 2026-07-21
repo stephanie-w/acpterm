@@ -54,6 +54,10 @@ def callback(
             help="Run agent in read-only mode (disables file modifications)",
         ),
     ] = False,
+    model: Annotated[
+        str | None,
+        typer.Option("-m", "--model", help="Active model override for the session"),
+    ] = None,
 ) -> None:
     ctx.ensure_object(dict)
     ctx.obj["agent"] = agent
@@ -61,6 +65,7 @@ def callback(
     ctx.obj["auto_yes"] = auto_yes
     ctx.obj["verbose"] = verbose
     ctx.obj["read_only"] = read_only
+    ctx.obj["model"] = model
 
 
 async def _run_prompt(
@@ -74,6 +79,7 @@ async def _run_prompt(
     read_only: bool = False,
     resources: list[Path] | None = None,
     export: Path | None = None,
+    model_override: str | None = None,
 ) -> None:
     from .transcript import TranscriptRecorder
 
@@ -88,7 +94,9 @@ async def _run_prompt(
         read_only=read_only,
         transcript_recorder=recorder,
     )
-    await agent.start(target=target_session_id, load_existing=persist)
+    await agent.start(
+        target=target_session_id, load_existing=persist, model_override=model_override
+    )
     try:
         await agent.send_prompt(prompt_text, resources=resources)
         if persist and agent.session_id:
@@ -307,16 +315,28 @@ def set_model(
 
     _run_async(run())
 
+    # Always save to the default model configuration
+    from .config import Config
+
+    try:
+        config = Config.load()
+        config.set_default_model(agent_binary, model_id)
+    except Exception as e:
+        typer.echo(f"Warning: Failed to save '{model_id}' as default: {e}", err=True)
+
     if success is None:
         typer.echo(
-            f"Active session '{session_name}' not found for {agent_binary} in {cwd}.",
-            err=True,
+            f"No active session found. Saved '{model_id}' as the default"
+            f" model for agent '{agent_binary}' for future sessions."
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=0)
     elif not success:
         raise typer.Exit(code=1)
     else:
-        typer.echo(f"Model set to '{model_id}' for session '{session_name}'.")
+        typer.echo(
+            f"Model set to '{model_id}' for session '{session_name}', and"
+            " saved as default for future sessions."
+        )
 
 
 # ── modes ─────────────────────────────────────────────────────────────────────
@@ -740,6 +760,7 @@ def prompt(
             read_only=ctx.obj.get("read_only", False),
             resources=resource,
             export=export,
+            model_override=ctx.obj.get("model"),
         )
     )
 
@@ -791,6 +812,7 @@ def exec(
             read_only=ctx.obj.get("read_only", False),
             resources=resource,
             export=export,
+            model_override=ctx.obj.get("model"),
         )
     )
 

@@ -270,7 +270,11 @@ class ACPAgent:
         self._session_id: str | None = None
 
     async def start(
-        self, target: str | None = None, *, load_existing: bool = True
+        self,
+        target: str | None = None,
+        *,
+        load_existing: bool = True,
+        model_override: str | None = None,
     ) -> None:
         capabilities = acp_schema.ClientCapabilities(
             fs=acp_schema.FileSystemCapabilities(
@@ -324,6 +328,28 @@ class ACPAgent:
         )
         if not self._silent and session_resp:
             display_initial_session_info(session_resp)
+
+        # Apply model override or config-defined default model if set
+        from .config import Config
+
+        model_to_set = model_override
+        if not model_to_set:
+            try:
+                config = Config.load()
+                model_to_set = config.get_default_model(self.agent_binary)
+            except Exception:
+                pass
+
+        if model_to_set:
+            try:
+                await self.set_model(model_to_set)
+            except Exception as e:
+                # Do not fail start if setting the model fails (e.g. unsupported option/method)
+                if not self._silent:
+                    _console.print(
+                        f"[yellow]Warning: Failed to auto-set model"
+                        f" '{model_to_set}': {e}[/yellow]"
+                    )
 
     async def send_prompt(
         self, prompt: str, resources: list[Path] | None = None
