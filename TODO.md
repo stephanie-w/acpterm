@@ -23,6 +23,8 @@
 - [x] Support slash commands discovery and execution (listing available slash commands and invoking them)
 - [x] Export session run transcript (Tee-like clean markdown format, or structured JSON logging of method calls/tool updates while excluding micro-streaming wire noise) (`--export <file>`)
 - [ ] Dynamic shell autocompletion for `-a` (agents), `-s` (sessions), and `models set` (models)
+- [ ] Support terminal capabilities (terminal/* RPC methods for running test/build commands)
+- [ ] Support plan capabilities (rendering agent milestone checklists and tracking updates)
 
 ## Issues & Investigation
 
