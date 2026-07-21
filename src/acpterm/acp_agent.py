@@ -111,6 +111,9 @@ class AgentClient:
                 size = getattr(update, "size", None)
                 cost = getattr(update, "cost", None)
                 self._recorder.set_usage({"used": used, "size": size, "cost": cost})
+            elif session_update == "plan":
+                entries = getattr(update, "entries", None) or []
+                self._recorder.set_plan(entries)
             elif session_update == "available_commands_update":
                 cmds = getattr(update, "available_commands", None) or getattr(
                     update, "availableCommands", None

@@ -19,6 +19,7 @@ class TranscriptRecorder:
         self.thoughts: list[str] = []
         self.messages: list[str] = []
         self.tool_calls: dict[str, dict[str, Any]] = {}
+        self.plan_entries: list[Any] = []
         self.usage: dict[str, Any] | None = None
         self.stop_reason: str | None = None
 
@@ -70,6 +71,10 @@ class TranscriptRecorder:
         """Set the turn's final stop reason."""
         self.stop_reason = reason
 
+    def set_plan(self, entries: list[Any]) -> None:
+        """Replace the current plan entries (each update is a full snapshot)."""
+        self.plan_entries = entries
+
     def to_markdown(self) -> str:
         """Format the recorded session events as a clean Markdown document."""
         lines = []
@@ -91,6 +96,21 @@ class TranscriptRecorder:
             if thought_text:
                 lines.append("> " + thought_text.replace("\n", "\n> "))
                 lines.append("")
+
+        if self.plan_entries:
+            lines.append("## Plan")
+            for entry in self.plan_entries:
+                content = getattr(entry, "content", str(entry))
+                status = getattr(entry, "status", "pending")
+                priority = getattr(entry, "priority", "medium")
+                icon = {"completed": "x", "in_progress": "/"}.get(status, " ")
+                priority_suffix = ""
+                if priority == "high":
+                    priority_suffix = " *(high)*"
+                elif priority == "low":
+                    priority_suffix = " *(low)*"
+                lines.append(f"- [{icon}] {content}{priority_suffix}")
+            lines.append("")
 
         if self.tool_calls:
             lines.append("## Tools Called")

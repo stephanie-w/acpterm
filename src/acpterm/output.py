@@ -10,6 +10,18 @@ _console = Console(highlight=False)
 
 CONTENT_TRUNCATE_LEN = 300
 
+_PLAN_STATUS_ICONS: dict[str, str] = {
+    "pending": "○",
+    "in_progress": "▸",
+    "completed": "✓",
+}
+
+_PLAN_STATUS_STYLES: dict[str, str] = {
+    "pending": "dim",
+    "in_progress": "yellow",
+    "completed": "green",
+}
+
 
 def _tag(label: str, style: str | None = None) -> str:
     escaped = f"\\[{label}]"
@@ -82,6 +94,15 @@ def _extract_text(content: Any) -> str:
 def _format_content_blocks(content_blocks: list[Any]) -> str:
     parts: list[str] = []
     for block in content_blocks:
+        # Handle terminal content references (type="terminal", terminalId=...)
+        block_type = getattr(block, "type", None)
+        if block_type == "terminal":
+            terminal_id = getattr(block, "terminal_id", None) or getattr(
+                block, "terminalId", None
+            )
+            parts.append(f"[terminal {terminal_id or 'unknown'}]")
+            continue
+
         if hasattr(block, "content"):
             inner = block.content
         else:
@@ -200,6 +221,28 @@ def format_session_update(
                             _state._model_displayed = True
                             _console.print(f"{_tag('model', 'dim')} {model}")
                         break
+
+    elif session_update == "plan":
+        _state.end_stream()
+        _state.flush_md()
+        entries = getattr(update, "entries", None) or []
+        if entries:
+            _console.print(f"\n{_tag('plan', 'bold cyan')}")
+            for entry in entries:
+                content = getattr(entry, "content", "")
+                priority = getattr(entry, "priority", "medium")
+                status = getattr(entry, "status", "pending")
+
+                icon = _PLAN_STATUS_ICONS.get(status, "○")
+                style = _PLAN_STATUS_STYLES.get(status, "")
+
+                priority_tag = ""
+                if priority == "high":
+                    priority_tag = " [red]↑[/red]"
+                elif priority == "low":
+                    priority_tag = " [dim]↓[/dim]"
+
+                _console.print(f"  [{style}]{icon}[/{style}] {content}{priority_tag}")
 
 
 def display_initial_session_info(session_response: Any) -> None:
