@@ -20,7 +20,7 @@
 - [ ] `sessions history [name]` — show recent turn history
 - [ ] `sessions ensure [--name NAME]` — return existing or create
 - [ ] `status` — local process status
-- [ ] Support slash commands discovery and execution (listing available slash commands and invoking them)
+- [x] Support slash commands discovery and execution (listing available slash commands and invoking them)
 - [x] Export session run transcript (Tee-like clean markdown format, or structured JSON logging of method calls/tool updates while excluding micro-streaming wire noise) (`--export <file>`)
 - [ ] Dynamic shell autocompletion for `-a` (agents), `-s` (sessions), and `models set` (models)
 

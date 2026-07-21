@@ -46,11 +46,13 @@ class AgentClient:
         silent: bool = False,
         read_only: bool = False,
         recorder: TranscriptRecorder | None = None,
+        agent_binary: str = "opencode",
     ) -> None:
         self._auto_approve = auto_approve
         self._silent = silent
         self._read_only = read_only
         self._recorder = recorder
+        self._agent_binary = agent_binary
 
     def on_connect(self, conn: Any) -> None:
         pass
@@ -109,6 +111,17 @@ class AgentClient:
                 size = getattr(update, "size", None)
                 cost = getattr(update, "cost", None)
                 self._recorder.set_usage({"used": used, "size": size, "cost": cost})
+            elif session_update == "available_commands_update":
+                cmds = getattr(update, "available_commands", None) or getattr(
+                    update, "availableCommands", None
+                )
+                if cmds:
+                    from . import agent_cache
+
+                    try:
+                        agent_cache.update_commands(self._agent_binary, cmds)
+                    except Exception:
+                        pass
 
     async def request_permission(
         self,
@@ -296,6 +309,7 @@ class ACPAgent:
             read_only=self._read_only,
             silent=self._silent,
             recorder=self._transcript_recorder,
+            agent_binary=self.agent_binary,
         )
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])

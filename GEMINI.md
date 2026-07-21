@@ -22,6 +22,7 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Implement `acpterm modes list` and `acpterm modes set <mode_id>` commands for agent mode switching
 - [x] Implement structured interactive form elicitation (`fs/create_elicitation`) using Rich terminal prompts
 - [x] Implement config show / config init commands for profile configuration management
+- [x] Implement `acpterm commands list` for agent slash command discovery
 
 ## 🛠️ Configuration Redesign
 

@@ -48,7 +48,17 @@ def get_modes(agent_name: str) -> dict[str, Any] | None:
     return entry.get("modes")
 
 
-def store(agent_name: str, config_options: Any, modes: Any) -> None:
+def get_commands(agent_name: str) -> list[dict[str, str]] | None:
+    data = _read()
+    entry = data.get(agent_name)
+    if not entry:
+        return None
+    return entry.get("commands")
+
+
+def store(
+    agent_name: str, config_options: Any, modes: Any, commands: Any = None
+) -> None:
     data = _read()
 
     co_list: list[dict[str, Any]] = []
@@ -86,9 +96,18 @@ def store(agent_name: str, config_options: Any, modes: Any) -> None:
                 )
         mode_dict = {"current_mode_id": current, "available_modes": available_list}
 
+    cmd_list: list[dict[str, str]] = []
+    if commands:
+        for cmd in commands:
+            name = getattr(cmd, "name", None)
+            desc = getattr(cmd, "description", None)
+            if name:
+                cmd_list.append({"name": name, "description": desc or ""})
+
     data[agent_name] = {
         "config_options": co_list,
         "modes": mode_dict,
+        "commands": cmd_list,
         "refreshed_at": datetime.now(timezone.utc).isoformat(),
     }
     _write(data)
@@ -116,6 +135,22 @@ def update_mode(agent_name: str, mode_id: str) -> None:
         if modes:
             modes["current_mode_id"] = mode_id
             _write(data)
+
+
+def update_commands(agent_name: str, commands: Any) -> None:
+    """Update the cached commands list for an agent."""
+    data = _read()
+    entry = data.get(agent_name)
+    if entry:
+        cmd_list: list[dict[str, str]] = []
+        if commands:
+            for cmd in commands:
+                name = getattr(cmd, "name", None)
+                desc = getattr(cmd, "description", None)
+                if name:
+                    cmd_list.append({"name": name, "description": desc or ""})
+        entry["commands"] = cmd_list
+        _write(data)
 
 
 def _serialize_select_options(opt: Any) -> list[dict[str, str]]:

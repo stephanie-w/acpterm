@@ -24,6 +24,9 @@ app.add_typer(modes_app, name="modes")
 config_app = typer.Typer(help="Configuration management")
 app.add_typer(config_app, name="config")
 
+commands_app = typer.Typer(help="Discover available slash commands")
+app.add_typer(commands_app, name="commands")
+
 sessions_app = typer.Typer(help="Session management")
 app.add_typer(sessions_app, name="sessions")
 
@@ -162,10 +165,32 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
 
     from acp import schema as acp_schema
 
+    commands_received = []
+
+    class CachingClient(AgentClient):
+        async def session_update(
+            self,
+            session_id: str,
+            update: Any,
+            **kwargs: Any,
+        ) -> None:
+            session_update = getattr(update, "session_update", None) or getattr(
+                update, "sessionUpdate", None
+            )
+            if session_update == "available_commands_update":
+                cmds = getattr(update, "available_commands", None) or getattr(
+                    update, "availableCommands", None
+                )
+                if cmds:
+                    commands_received.extend(cmds)
+
     capabilities = acp_schema.ClientCapabilities(
         fs=acp_schema.FileSystemCapabilities(
             read_text_file=True,
             write_text_file=True,
+        ),
+        elicitation=acp_schema.ElicitationCapabilities(
+            form=acp_schema.ElicitationFormCapabilities(),
         ),
         session=acp_schema.ClientSessionCapabilities(
             config_options=acp_schema.SessionConfigOptionsCapabilities(
@@ -177,11 +202,13 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
     cmd = resolve_agent_command(agent_binary)
     transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
     reader, writer, _process = await transport_ctx.__aenter__()  # type: ignore[func-returns-value]
-    conn = ClientSideConnection(AgentClient(silent=True), writer, reader)
+    conn = ClientSideConnection(CachingClient(silent=True), writer, reader)
     try:
         cwd = str(Path.cwd().absolute())
         await conn.initialize(protocol_version=1, client_capabilities=capabilities)
         resp = await conn.new_session(cwd=cwd)
+        # Give the agent a moment to emit available commands notifications
+        await asyncio.sleep(0.5)
         if verbose:
             _console.print("[dim]--- new_session response ---[/dim]")
             _console.print(json.dumps(resp.model_dump(mode="json"), indent=2))
@@ -190,7 +217,7 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
             resp, "configOptions", None
         )
         modes = getattr(resp, "modes", None)
-        agent_cache.store(agent_binary, co, modes)
+        agent_cache.store(agent_binary, co, modes, commands_received)
         sid = getattr(resp, "session_id", None) or getattr(resp, "sessionId", None)
         if sid:
             try:
@@ -460,6 +487,44 @@ def set_mode(
         raise typer.Exit(code=1)
     else:
         typer.echo(f"Mode set to '{mode_id}' for session '{session_name}'.")
+
+
+# ── commands ──────────────────────────────────────────────────────────────────
+
+
+@commands_app.command(name="list")
+def list_commands(
+    ctx: typer.Context,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Force re-fetch from agent")
+    ] = False,
+) -> None:
+    """List available slash commands from the agent cache."""
+    agent_binary = ctx.obj["agent"]
+
+    if refresh or not agent_cache.is_fresh(agent_binary):
+        _run_async(
+            _fetch_and_cache_agent_info(
+                agent_binary, verbose=ctx.obj.get("verbose", False)
+            )
+        )
+
+    commands = agent_cache.get_commands(agent_binary)
+
+    table = Table(title=f"Slash Commands — {agent_binary}")
+    table.add_column("Command", style="bold cyan")
+    table.add_column("Description")
+
+    if commands:
+        for cmd in commands:
+            name = cmd["name"]
+            trigger = name if name.startswith("/") else f"/{name}"
+            table.add_row(trigger, cmd["description"])
+
+    if not table.row_count:
+        _console.print("[dim]No available commands information[/dim]")
+        return
+    _console.print(table)
 
 
 # ── config ────────────────────────────────────────────────────────────────────
