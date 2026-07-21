@@ -206,6 +206,9 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
                 boolean=acp_schema.BooleanConfigOptionCapabilities()
             )
         ),
+        terminal=True,
+        plan=acp_schema.PlanCapabilities(),
+        field_meta={},
     )
 
     cmd = resolve_agent_command(agent_binary)

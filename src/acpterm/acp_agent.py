@@ -303,6 +303,9 @@ class ACPAgent:
                     boolean=acp_schema.BooleanConfigOptionCapabilities()
                 )
             ),
+            terminal=True,
+            plan=acp_schema.PlanCapabilities(),
+            field_meta={},
         )
 
         client = AgentClient(
