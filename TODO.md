@@ -14,14 +14,14 @@
 
 - [ ] Agent as positional arg (`acpterm opencode prompt '...'`)
 - [ ] Implicit prompt (`acpterm opencode 'fix the tests'`)
-- [ ] `--no-wait` flag — enqueue without waiting
+- [x] ~~`--no-wait` flag — enqueue without waiting~~ (Abandoned: background runs require auto-approval, presenting high safety and process management risks)
 - [ ] `cancel` command — cancel in-flight prompt
-- [ ] `config show` / `config init` commands
+- [x] `config show` / `config init` commands
 - [ ] `sessions history [name]` — show recent turn history
 - [ ] `sessions ensure [--name NAME]` — return existing or create
 - [ ] `status` — local process status
 - [ ] Support slash commands discovery and execution (listing available slash commands and invoking them)
-- [ ] Export session run transcript (Tee-like clean markdown format, or structured JSON logging of method calls/tool updates while excluding micro-streaming wire noise) (`--export <file>`)
+- [x] Export session run transcript (Tee-like clean markdown format, or structured JSON logging of method calls/tool updates while excluding micro-streaming wire noise) (`--export <file>`)
 - [ ] Dynamic shell autocompletion for `-a` (agents), `-s` (sessions), and `models set` (models)
 
 ## Issues & Investigation

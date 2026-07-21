@@ -118,6 +118,16 @@ async def _run_prompt(
                     f"\n[red][error] Failed to export transcript: {e}[/red]",
                     style="bold",
                 )
+    except KeyboardInterrupt, asyncio.CancelledError:
+        _console.print(
+            "\n[yellow]Interrupted. Cancelling agent execution gracefully...[/yellow]"
+        )
+        try:
+            await agent.cancel()
+            await asyncio.sleep(1.5)
+        except Exception as e:
+            _console.print(f"[red]Failed to send cancel notification: {e}[/red]")
+        raise typer.Exit(code=130)
     finally:
         await agent.stop()
 

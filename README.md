@@ -169,4 +169,8 @@ You can raise this limit by configuring `max_prompt_chars` in your configuration
 Sessions are persisted in `~/.acpterm/sessions.json`, keyed by agent name, working
 directory, and session name. This lets you resume sessions across CLI invocations.
 
+## Rejected / Questionable Features
+
+*   ~~**Background Execution (`--no-wait`)**~~: Planned to allow enqueuing prompts without waiting for the response. Rejected because unattended background execution requires blind auto-approval of all agent actions (such as file modifications and shell commands), which presents significant safety risks, alongside process management complexity.
+
 [acp]: https://agentclientprotocol.com
