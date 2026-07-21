@@ -19,6 +19,9 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Add config-based fallback to `acpterm models list` rendering in `src/acpterm/cli.py`
 - [x] Implement stdin prompt piping (`echo "..." | acpterm prompt`)
 - [x] Implement file-based prompt input via `--file / -f` option
+- [x] Implement `acpterm modes list` and `acpterm modes set <mode_id>` commands for agent mode switching
+- [x] Implement structured interactive form elicitation (`fs/create_elicitation`) using Rich terminal prompts
+- [x] Implement config show / config init commands for profile configuration management
 
 ## 🛠️ Configuration Redesign
 
@@ -44,3 +47,22 @@ This structure ensures:
 1. The `agents` dictionary is validated as containing string keys and string values.
 2. Safe initialization with default values if the configuration file is empty or missing.
 3. Safe validation of custom JSON inputs.
+
+## 📚 Codebase Reference & ACP Documentation
+
+For future development sessions, the codebase is structured as follows:
+
+*   **`src/acpterm/cli.py`**: The CLI entrypoint utilizing `typer`. Registers CLI subcommands for models, modes, sessions, prompting, and exec.
+*   **`src/acpterm/acp_agent.py`**: Handles connecting to the ACP agent process, lifecycle initialization, session load/creation, and mapping client capability callbacks.
+*   **`src/acpterm/elicitation.py`**: Implements form rendering, UI prompts (via `rich.prompt`), validation, and defaults logic for structured client elicitations.
+*   **`src/acpterm/agent_cache.py`**: Manages a local cache of agent config options, models, and modes with TTL expiration.
+
+### ACP Protocol Docs
+
+Detailed references for ACP connection flows, schemas, and capabilities are documented locally in:
+*   [schema.md](file:///home/stephanie/DEV/acpterm/docs/acp-protocol/schema.md): Complete list of RPC methods, requests, and response models.
+*   [prompt-turn.md](file:///home/stephanie/DEV/acpterm/docs/acp-protocol/prompt-turn.md): Lifecycle of prompt turns, cancellation, and sequence flow.
+*   [session-modes.md](file:///home/stephanie/DEV/acpterm/docs/acp-protocol/session-modes.md): Agent operating modes and switching protocols.
+*   [file-system.md](file:///home/stephanie/DEV/acpterm/docs/acp-protocol/file-system.md): File system capability schema.
+*   [terminals.md](file:///home/stephanie/DEV/acpterm/docs/acp-protocol/terminals.md): Interactive terminal subprocess details.
+

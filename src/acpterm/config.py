@@ -29,6 +29,11 @@ class Config(BaseModel):
                 pass
         return cls()
 
+    def save(self) -> None:
+        """Save the configuration to disk."""
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_FILE.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+
     def get_agent_models(self, agent_name: str) -> list[dict[str, str]]:
         """Get the configured models list for the agent, with defaults as fallback."""
         if agent_name in self.agent_models:

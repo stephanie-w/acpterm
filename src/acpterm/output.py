@@ -238,6 +238,8 @@ def display_initial_session_info(session_response: Any) -> None:
             if model and not _state._model_displayed:
                 _state._model_displayed = True
                 _console.print(f"{_tag('model', 'dim')} {model}")
+
+
 def format_stop_reason(stop_reason: str) -> None:
     _state.end_stream()
     _state.flush_md()

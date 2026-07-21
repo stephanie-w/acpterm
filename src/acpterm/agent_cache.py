@@ -107,6 +107,17 @@ def update_model(agent_name: str, model_id: str) -> None:
         _write(data)
 
 
+def update_mode(agent_name: str, mode_id: str) -> None:
+    """Update the cached current mode for an agent."""
+    data = _read()
+    entry = data.get(agent_name)
+    if entry:
+        modes = entry.get("modes")
+        if modes:
+            modes["current_mode_id"] = mode_id
+            _write(data)
+
+
 def _serialize_select_options(opt: Any) -> list[dict[str, str]]:
     options = getattr(opt, "options", None)
     if not options:

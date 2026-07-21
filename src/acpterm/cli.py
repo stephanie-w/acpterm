@@ -18,6 +18,12 @@ _console = Console(highlight=False)
 models_app = typer.Typer(help="Model discovery and control")
 app.add_typer(models_app, name="models")
 
+modes_app = typer.Typer(help="Session mode discovery and control")
+app.add_typer(modes_app, name="modes")
+
+config_app = typer.Typer(help="Configuration management")
+app.add_typer(config_app, name="config")
+
 sessions_app = typer.Typer(help="Session management")
 app.add_typer(sessions_app, name="sessions")
 
@@ -42,7 +48,11 @@ def callback(
         bool, typer.Option("-v", "--verbose", help="Show raw agent JSON-RPC responses")
     ] = False,
     read_only: Annotated[
-        bool, typer.Option("--read-only", help="Run agent in read-only mode (disables file modifications)")
+        bool,
+        typer.Option(
+            "--read-only",
+            help="Run agent in read-only mode (disables file modifications)",
+        ),
     ] = False,
 ) -> None:
     ctx.ensure_object(dict)
@@ -63,8 +73,12 @@ async def _run_prompt(
     verbose: bool = False,
     read_only: bool = False,
     resources: list[Path] | None = None,
+    export: Path | None = None,
 ) -> None:
+    from .transcript import TranscriptRecorder
+
     project_root = Path.cwd()
+    recorder = TranscriptRecorder(prompt_text, resources=resources) if export else None
     agent = ACPAgent(
         project_root=project_root,
         agent_binary=agent_binary,
@@ -72,6 +86,7 @@ async def _run_prompt(
         auto_approve=auto_yes,
         verbose=verbose,
         read_only=read_only,
+        transcript_recorder=recorder,
     )
     await agent.start(target=target_session_id, load_existing=persist)
     try:
@@ -83,6 +98,18 @@ async def _run_prompt(
                 agent.session_id,
                 session_name,
             )
+        if export and recorder:
+            try:
+                export.parent.mkdir(parents=True, exist_ok=True)
+                export.write_text(recorder.to_markdown(), encoding="utf-8")
+                _console.print(
+                    f"\n[green][success][/green] Transcript exported to {export}"
+                )
+            except Exception as e:
+                _console.print(
+                    f"\n[red][error] Failed to export transcript: {e}[/red]",
+                    style="bold",
+                )
     finally:
         await agent.stop()
 
@@ -108,9 +135,6 @@ async def _create_session(
         await agent_obj.stop()
 
 
-
-
-
 async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) -> None:
     import json
     from acp.client.connection import ClientSideConnection
@@ -119,6 +143,7 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
     from acp.transports import spawn_stdio_transport
 
     from acp import schema as acp_schema
+
     capabilities = acp_schema.ClientCapabilities(
         fs=acp_schema.FileSystemCapabilities(
             read_text_file=True,
@@ -198,7 +223,9 @@ def list_models(
             model_opt = {
                 "id": "model",
                 "current_value": "",
-                "options": [{"id": m["id"], "name": m["name"]} for m in fallback_models],
+                "options": [
+                    {"id": m["id"], "name": m["name"]} for m in fallback_models
+                ],
             }
 
     table = Table(title=f"Models — {agent_binary}")
@@ -290,6 +317,198 @@ def set_model(
         raise typer.Exit(code=1)
     else:
         typer.echo(f"Model set to '{model_id}' for session '{session_name}'.")
+
+
+# ── modes ─────────────────────────────────────────────────────────────────────
+
+
+@modes_app.command(name="list")
+def list_modes(
+    ctx: typer.Context,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Force re-fetch from agent")
+    ] = False,
+) -> None:
+    """List available modes and show the currently active one."""
+    agent_binary = ctx.obj["agent"]
+
+    if refresh or not agent_cache.is_fresh(agent_binary):
+        _run_async(
+            _fetch_and_cache_agent_info(
+                agent_binary, verbose=ctx.obj.get("verbose", False)
+            )
+        )
+
+    modes = agent_cache.get_modes(agent_binary)
+
+    table = Table(title=f"Modes — {agent_binary}")
+    table.add_column("")
+    table.add_column("Name", style="bold")
+    table.add_column("ID")
+
+    if modes:
+        current = modes.get("current_mode_id", "")
+        available: list[dict[str, Any]] = modes.get("available_modes", [])
+        for m in available:
+            star = "★" if m["id"] == current else " "
+            table.add_row(star, m.get("name", m["id"]), m["id"])
+
+    if not table.row_count:
+        _console.print("[dim]No mode information available[/dim]")
+        return
+    _console.print(table)
+
+
+async def _set_mode_on_agent(
+    agent_binary: str,
+    cwd: str,
+    session_name: str,
+    mode_id: str,
+    verbose: bool = False,
+) -> bool | None:
+    entry = session_store.get_entry(agent_binary, cwd, session_name)
+    if not entry:
+        return None
+    session_id = entry.get("session_id")
+    if not session_id:
+        return None
+
+    agent_obj = ACPAgent(
+        project_root=Path(cwd),
+        agent_binary=agent_binary,
+        session_name=session_name,
+        verbose=verbose,
+        silent=True,
+    )
+    try:
+        await agent_obj.start(target=session_id, load_existing=True)
+        result_mode = await agent_obj.set_mode(mode_id)
+        if result_mode:
+            agent_cache.update_mode(agent_binary, result_mode)
+    except Exception as e:
+        if "session/set_mode" in str(e):
+            typer.echo(
+                f"Error: Agent '{agent_binary}' does not support changing modes via the standard protocol (method not found: session/set_mode).",
+                err=True,
+            )
+        else:
+            typer.echo(f"Error setting mode: {e}", err=True)
+        return False
+    finally:
+        await agent_obj.stop()
+    return True
+
+
+@modes_app.command(name="set")
+def set_mode(
+    ctx: typer.Context,
+    mode_id: Annotated[str, typer.Argument(help="Mode ID to activate")],
+) -> None:
+    """Set the active mode for the current session."""
+    agent_binary = ctx.obj["agent"]
+    session_name = ctx.obj["session_name"]
+    cwd = str(Path.cwd().absolute())
+    verbose = ctx.obj.get("verbose", False)
+
+    success: bool | None = None
+
+    async def run() -> None:
+        nonlocal success
+        success = await _set_mode_on_agent(
+            agent_binary, cwd, session_name, mode_id, verbose
+        )
+
+    _run_async(run())
+
+    if success is None:
+        typer.echo(
+            f"Active session '{session_name}' not found for {agent_binary} in {cwd}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    elif not success:
+        raise typer.Exit(code=1)
+    else:
+        typer.echo(f"Mode set to '{mode_id}' for session '{session_name}'.")
+
+
+# ── config ────────────────────────────────────────────────────────────────────
+
+
+@config_app.command(name="show")
+def show_config() -> None:
+    """Show the current configuration file."""
+    from rich.syntax import Syntax
+    from .config import CONFIG_FILE
+
+    if not CONFIG_FILE.exists():
+        _console.print(
+            f"[yellow]Configuration file does not exist at:[/yellow] {CONFIG_FILE}"
+        )
+        _console.print("Run [bold]acpterm config init[/bold] to create one.")
+        return
+
+    try:
+        content = CONFIG_FILE.read_text(encoding="utf-8")
+        syntax = Syntax(content, "json", theme="monokai", line_numbers=True)
+        _console.print(f"[bold]Configuration file:[/bold] {CONFIG_FILE}\n")
+        _console.print(syntax)
+    except Exception as e:
+        typer.echo(f"Error reading configuration file: {e}", err=True)
+        raise typer.Exit(code=1)
+
+
+@config_app.command(name="init")
+def init_config(
+    overwrite: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite",
+            "-o",
+            help="Overwrite existing configuration file without prompting",
+        ),
+    ] = False,
+) -> None:
+    """Initialize a default configuration file."""
+    from .config import CONFIG_FILE, Config
+
+    if CONFIG_FILE.exists() and not overwrite:
+        if not typer.confirm(
+            f"Configuration file already exists at {CONFIG_FILE}. Overwrite?"
+        ):
+            _console.print("[yellow]Aborted.[/yellow]")
+            return
+
+    # Create a nice template config
+    config = Config(
+        agents={
+            "opencode": "opencode",
+            "kiro": "kiro",
+        },
+        agent_models={
+            "opencode": [
+                {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"},
+                {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash"},
+                {"id": "claude-3-5-sonnet", "name": "Claude 3.5 Sonnet"},
+                {"id": "gpt-4o", "name": "GPT 4o"},
+            ],
+            "kiro": [
+                {"id": "kiro-large", "name": "Kiro Large"},
+                {"id": "kiro-medium", "name": "Kiro Medium"},
+            ],
+        },
+        max_prompt_chars=100000,
+    )
+
+    try:
+        config.save()
+        _console.print(
+            f"[green][success][/green] Initialized default configuration at"
+            f" {CONFIG_FILE}"
+        )
+    except Exception as e:
+        typer.echo(f"Error initializing configuration file: {e}", err=True)
+        raise typer.Exit(code=1)
 
 
 # ── sessions ──────────────────────────────────────────────────────────────────
@@ -411,7 +630,9 @@ def close_session(
 
     async def run() -> None:
         nonlocal removed
-        removed = await _close_session_on_agent(agent_binary, cwd, session_name, verbose)
+        removed = await _close_session_on_agent(
+            agent_binary, cwd, session_name, verbose
+        )
 
     _run_async(run())
 
@@ -478,7 +699,8 @@ def prompt(
         list[str] | None, typer.Argument(help="Prompt text to send to the agent")
     ] = None,
     file: Annotated[
-        Path | None, typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)")
+        Path | None,
+        typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)"),
     ] = None,
     resource: Annotated[
         list[Path] | None,
@@ -489,6 +711,18 @@ def prompt(
             exists=True,
             file_okay=True,
             dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
+    export: Annotated[
+        Path | None,
+        typer.Option(
+            "--export",
+            "-e",
+            help="Export session run transcript to a Markdown file",
+            file_okay=True,
+            dir_okay=False,
+            writable=True,
             resolve_path=True,
         ),
     ] = None,
@@ -505,6 +739,7 @@ def prompt(
             verbose=ctx.obj.get("verbose", False),
             read_only=ctx.obj.get("read_only", False),
             resources=resource,
+            export=export,
         )
     )
 
@@ -516,7 +751,8 @@ def exec(
         list[str] | None, typer.Argument(help="Prompt text (one-shot)")
     ] = None,
     file: Annotated[
-        Path | None, typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)")
+        Path | None,
+        typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)"),
     ] = None,
     resource: Annotated[
         list[Path] | None,
@@ -527,6 +763,18 @@ def exec(
             exists=True,
             file_okay=True,
             dir_okay=False,
+            resolve_path=True,
+        ),
+    ] = None,
+    export: Annotated[
+        Path | None,
+        typer.Option(
+            "--export",
+            "-e",
+            help="Export session run transcript to a Markdown file",
+            file_okay=True,
+            dir_okay=False,
+            writable=True,
             resolve_path=True,
         ),
     ] = None,
@@ -542,6 +790,7 @@ def exec(
             verbose=ctx.obj.get("verbose", False),
             read_only=ctx.obj.get("read_only", False),
             resources=resource,
+            export=export,
         )
     )
 

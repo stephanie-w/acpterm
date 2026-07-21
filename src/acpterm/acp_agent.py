@@ -12,8 +12,13 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from .config import resolve_agent_command
-from .output import format_session_update, format_stop_reason, display_initial_session_info
+from .output import (
+    format_session_update,
+    format_stop_reason,
+    display_initial_session_info,
+)
 from .session_store import get as get_saved_session
+from .transcript import TranscriptRecorder
 
 PROTOCOL_VERSION = 1
 _console = Console(highlight=False)
@@ -40,10 +45,12 @@ class AgentClient:
         auto_approve: bool = False,
         silent: bool = False,
         read_only: bool = False,
+        recorder: TranscriptRecorder | None = None,
     ) -> None:
         self._auto_approve = auto_approve
         self._silent = silent
         self._read_only = read_only
+        self._recorder = recorder
 
     def on_connect(self, conn: Any) -> None:
         pass
@@ -56,6 +63,52 @@ class AgentClient:
     ) -> None:
         if not self._silent:
             format_session_update(session_id, update)
+
+        if self._recorder:
+            from .output import _extract_text, _format_content_blocks
+
+            session_update = getattr(update, "session_update", None) or getattr(
+                update, "sessionUpdate", None
+            )
+
+            if session_update == "agent_thought_chunk":
+                text = _extract_text(update)
+                if text:
+                    self._recorder.add_thought(text)
+            elif session_update == "agent_message_chunk":
+                text = _extract_text(update)
+                if text:
+                    self._recorder.add_message(text)
+            elif session_update == "tool_call":
+                title = getattr(update, "title", "Unknown tool") or "Unknown tool"
+                kind = getattr(update, "kind", None)
+                kind_str = getattr(kind, "value", str(kind)) if kind else "other"
+                tool_call_id = (
+                    getattr(update, "tool_call_id", None)
+                    or getattr(update, "toolCallId", None)
+                    or "call_default"
+                )
+                self._recorder.add_tool_call(tool_call_id, title, kind_str)
+            elif session_update == "tool_call_update":
+                status = getattr(update, "status", None)
+                title = getattr(update, "title", None)
+                kind = getattr(update, "kind", None)
+                kind_str = getattr(kind, "value", str(kind)) if kind else None
+                content = getattr(update, "content", None)
+                tool_call_id = (
+                    getattr(update, "tool_call_id", None)
+                    or getattr(update, "toolCallId", None)
+                    or "call_default"
+                )
+                content_str = _format_content_blocks(content) if content else None
+                self._recorder.update_tool_call(
+                    tool_call_id, status, title, content_str
+                )
+            elif session_update == "usage_update":
+                used = getattr(update, "used", None)
+                size = getattr(update, "size", None)
+                cost = getattr(update, "cost", None)
+                self._recorder.set_usage({"used": used, "size": size, "cost": cost})
 
     async def request_permission(
         self,
@@ -159,7 +212,24 @@ class AgentClient:
     async def create_elicitation(
         self, message: str, mode: acp_schema.ElicitationMode, **kwargs: Any
     ) -> acp_schema.CreateElicitationResponse:
-        return acp_schema.DeclineElicitationResponse(action="decline")
+        # URL mode is not supported by this CLI client
+        requested_schema = getattr(mode, "requested_schema", None)
+        if requested_schema is None:
+            return acp_schema.DeclineElicitationResponse(action="decline")
+
+        if self._silent:
+            return acp_schema.DeclineElicitationResponse(action="decline")
+
+        from .elicitation import render_form
+
+        result = render_form(
+            message=message,
+            schema=requested_schema,
+            auto_accept=self._auto_approve,
+        )
+        if result is None:
+            return acp_schema.DeclineElicitationResponse(action="decline")
+        return acp_schema.AcceptElicitationResponse(action="accept", content=result)
 
     async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
         pass
@@ -183,6 +253,7 @@ class ACPAgent:
         verbose: bool = False,
         read_only: bool = False,
         silent: bool = False,
+        transcript_recorder: TranscriptRecorder | None = None,
     ) -> None:
         self.project_root_path = project_root
         self.agent_binary = agent_binary
@@ -191,6 +262,7 @@ class ACPAgent:
         self._verbose = verbose
         self._read_only = read_only
         self._silent = silent
+        self._transcript_recorder = transcript_recorder
 
         self._conn: ClientSideConnection | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -205,6 +277,9 @@ class ACPAgent:
                 read_text_file=True,
                 write_text_file=not self._read_only,
             ),
+            elicitation=acp_schema.ElicitationCapabilities(
+                form=acp_schema.ElicitationFormCapabilities(),
+            ),
             session=acp_schema.ClientSessionCapabilities(
                 config_options=acp_schema.SessionConfigOptionsCapabilities(
                     boolean=acp_schema.BooleanConfigOptionCapabilities()
@@ -216,6 +291,7 @@ class ACPAgent:
             auto_approve=self._auto_approve,
             read_only=self._read_only,
             silent=self._silent,
+            recorder=self._transcript_recorder,
         )
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
@@ -288,6 +364,8 @@ class ACPAgent:
         _debug_log(self._verbose, "prompt", resp)
         stop_reason = str(resp.stop_reason)
         format_stop_reason(stop_reason)
+        if self._transcript_recorder:
+            self._transcript_recorder.set_stop_reason(stop_reason)
         return stop_reason
 
     async def cancel(self) -> bool:
@@ -302,7 +380,7 @@ class ACPAgent:
         resp = await self._conn.set_session_mode(
             session_id=self._session_id, mode_id=mode_id
         )
-        return resp.current_mode_id if resp else None
+        return mode_id if resp else None
 
     async def set_model(self, model_id: str) -> None:
         if self._conn is None or self._session_id is None:
