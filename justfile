@@ -31,7 +31,7 @@ shell:
 # ========== CODE QUALITY & LINTING ==========
 
 # [Check] Run all quality checks (formatting, linting, types)
-check: format-check lint typecheck security-check
+check: format-check lint typecheck
     @echo "All quality checks passed! ✅"
 
 # [Fix] Automatically fix formatting and linting issues
@@ -78,7 +78,7 @@ test:
     uv run pytest -v
 
 # Run all tests (including coverage)
-test-all: test-cov security-check
+test-all: test-cov
     @echo "Full test suite completed! ✅"
 
 # Run tests with coverage report

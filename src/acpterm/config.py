@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import shlex
+import contextlib
 from pathlib import Path
+import shlex
+
 from pydantic import BaseModel, Field
+
 
 CONFIG_FILE = Path.home() / ".acpterm" / "config.json"
 
@@ -43,10 +46,8 @@ class Config(BaseModel):
                 on failure or if the file does not exist.
         """
         if CONFIG_FILE.exists():
-            try:
+            with contextlib.suppress(Exception):
                 return cls.model_validate_json(CONFIG_FILE.read_text())
-            except Exception:
-                pass
         return cls()
 
     def save(self) -> None:

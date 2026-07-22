@@ -1,21 +1,23 @@
 #!/usr/bin/env python
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+import sys
+
 
 # Ensure src/ is on python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from acp.schema import (
+    ElicitationBooleanPropertySchema,
+    ElicitationIntegerPropertySchema,
+    ElicitationMultiSelectPropertySchema,
     ElicitationSchema,
     ElicitationStringPropertySchema,
-    ElicitationIntegerPropertySchema,
-    ElicitationBooleanPropertySchema,
-    ElicitationMultiSelectPropertySchema,
     EnumOption,
     UntitledMultiSelectItems,
 )
+
 from acpterm.elicitation import render_form
 
 

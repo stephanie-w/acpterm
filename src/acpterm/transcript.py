@@ -114,7 +114,7 @@ class TranscriptRecorder:
 
         if self.tool_calls:
             lines.append("## Tools Called")
-            for tc_id, tc in self.tool_calls.items():
+            for _tc_id, tc in self.tool_calls.items():
                 title = tc["title"]
                 status = tc["status"]
                 kind = tc["kind"]

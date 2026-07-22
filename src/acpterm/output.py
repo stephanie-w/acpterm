@@ -6,6 +6,7 @@ from acp import schema as acp_schema
 from rich.console import Console
 from rich.markdown import Markdown
 
+
 _console = Console(highlight=False)
 
 CONTENT_TRUNCATE_LEN = 300

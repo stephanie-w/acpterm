@@ -15,6 +15,7 @@ from acp import schema as acp_schema
 from rich.console import Console
 from rich.prompt import Confirm, FloatPrompt, IntPrompt, Prompt
 
+
 _console = Console(highlight=False)
 _log = logging.getLogger(__name__)
 

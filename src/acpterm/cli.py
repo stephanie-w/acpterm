@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import Annotated, Any
 
-import typer
 from rich.console import Console
 from rich.table import Table
+import typer
 
+from . import agent_cache, session_store
 from .acp_agent import ACPAgent, AgentClient
-from . import agent_cache
-from . import session_store
+
 
 app = typer.Typer(name="acpterm", no_args_is_help=True)
 _console = Console(highlight=False)
@@ -49,7 +50,7 @@ def complete_agent(incomplete: str) -> list[str]:
 def complete_session(incomplete: str) -> list[str]:
     cwd = str(Path.cwd().absolute())
     sessions = session_store.list_sessions(cwd=cwd)
-    names = list(set(s.get("name", "") for s in sessions if s.get("name")))
+    names = list({s.get("name", "") for s in sessions if s.get("name")})
     return [n for n in names if n.startswith(incomplete)]
 
 
@@ -63,11 +64,9 @@ def complete_model(ctx: typer.Context, incomplete: str) -> list[str]:
     if not models:
         from .config import Config
 
-        try:
+        with contextlib.suppress(Exception):
             config = Config.load()
             models = [m["id"] for m in config.get_agent_models(agent_binary)]
-        except Exception:
-            pass
     return [m for m in models if m.startswith(incomplete)]
 
 
@@ -213,7 +212,7 @@ async def _run_prompt(
                     f"\n[red][error] Failed to export transcript: {e}[/red]",
                     style="bold",
                 )
-    except KeyboardInterrupt, asyncio.CancelledError:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         _console.print(
             "\n[yellow]Interrupted. Cancelling agent execution gracefully...[/yellow]"
         )
@@ -222,19 +221,19 @@ async def _run_prompt(
             await asyncio.sleep(1.5)
         except Exception as e:
             _console.print(f"[red]Failed to send cancel notification: {e}[/red]")
-        raise typer.Exit(code=130)
+        raise typer.Exit(code=130) from None
     finally:
         await agent.stop()
 
 
 async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) -> None:
     import json
-    from acp.client.connection import ClientSideConnection
-
-    from .config import resolve_agent_command
-    from acp.transports import spawn_stdio_transport
 
     from acp import schema as acp_schema
+    from acp.client.connection import ClientSideConnection
+    from acp.transports import spawn_stdio_transport
+
+    from .config import resolve_agent_command
 
     commands_received = []
 
@@ -294,10 +293,8 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
         agent_cache.store(agent_binary, co, modes, commands_received)
         sid = getattr(resp, "session_id", None) or getattr(resp, "sessionId", None)
         if sid:
-            try:
+            with contextlib.suppress(Exception):
                 await conn.close_session(session_id=sid)
-            except Exception:
-                pass
     finally:
         await conn.close()
         await transport_ctx.__aexit__(None, None, None)
@@ -614,6 +611,7 @@ def list_commands(
 def show_config() -> None:
     """Show the current configuration file."""
     from rich.syntax import Syntax
+
     from .config import CONFIG_FILE
 
     if not CONFIG_FILE.exists():
@@ -630,7 +628,7 @@ def show_config() -> None:
         _console.print(syntax)
     except Exception as e:
         typer.echo(f"Error reading configuration file: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
 
 @config_app.command(name="init")
@@ -645,7 +643,7 @@ def init_config(
     ] = False,
 ) -> None:
     """Initialize a default configuration file."""
-    from .config import CONFIG_FILE, Config
+    from .config import Config, CONFIG_FILE
 
     if CONFIG_FILE.exists() and not overwrite:
         if not typer.confirm(
@@ -683,7 +681,7 @@ def init_config(
         )
     except Exception as e:
         typer.echo(f"Error initializing configuration file: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
 
 
 # ── sessions ──────────────────────────────────────────────────────────────────
@@ -756,10 +754,9 @@ async def _close_session_on_agent(
             silent=True,
         )
         try:
-            await agent_obj.start(target=session_id, load_existing=True)
-            await agent_obj.close_session()
-        except Exception:
-            pass
+            with contextlib.suppress(Exception):
+                await agent_obj.start(target=session_id, load_existing=True)
+                await agent_obj.close_session()
         finally:
             await agent_obj.stop()
     session_store.remove(agent_binary, cwd, session_name)

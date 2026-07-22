@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone, UTC
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 
 DEFAULT_SESSION_NAME = "default"
 SESSIONS_FILE = Path.home() / ".acpterm" / "sessions.json"
@@ -49,7 +50,7 @@ def save(
     data = _read()
     key = _make_key(agent_name, cwd, name)
     existing = data.get(key, {})
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     created_at = existing.get("created_at", now_iso)
     data[key] = {
         "agent_name": agent_name,

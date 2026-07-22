@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone, UTC
 import json
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
 
 CACHE_FILE = Path.home() / ".acpterm" / "agent_cache.json"
 CACHE_TTL = timedelta(days=7)
@@ -27,9 +28,9 @@ def is_fresh(agent_name: str) -> bool:
         return False
     try:
         refreshed_at = datetime.fromisoformat(entry["refreshed_at"])
-    except ValueError, KeyError:
+    except (ValueError, KeyError):
         return False
-    return datetime.now(timezone.utc) - refreshed_at < CACHE_TTL
+    return datetime.now(UTC) - refreshed_at < CACHE_TTL
 
 
 def get_config_options(agent_name: str) -> list[dict[str, Any]] | None:
@@ -115,7 +116,7 @@ def store(
         "config_options": co_list,
         "modes": mode_dict,
         "commands": cmd_list,
-        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "refreshed_at": datetime.now(UTC).isoformat(),
     }
     _write(data)
 

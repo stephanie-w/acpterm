@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any
@@ -13,12 +14,13 @@ from rich.prompt import Confirm
 
 from .config import resolve_agent_command
 from .output import (
+    display_initial_session_info,
     format_session_update,
     format_stop_reason,
-    display_initial_session_info,
 )
 from .session_store import get as get_saved_session
 from .transcript import TranscriptRecorder
+
 
 PROTOCOL_VERSION = 1
 _console = Console(highlight=False)
@@ -121,10 +123,8 @@ class AgentClient:
                 if cmds:
                     from . import agent_cache
 
-                    try:
+                    with contextlib.suppress(Exception):
                         agent_cache.update_commands(self._agent_binary, cmds)
-                    except Exception:
-                        pass
 
     async def request_permission(
         self,
@@ -392,23 +392,20 @@ class ACPAgent:
                 session_resp, "configOptions", None
             )
             modes = getattr(session_resp, "modes", None)
-            try:
+            with contextlib.suppress(Exception):
                 agent_cache.store(self.agent_binary, config_options=co, modes=modes)
-            except Exception:
-                pass
 
         # Apply model override or config-defined default model if set
         import difflib
+
         from . import agent_cache
         from .config import Config
 
         model_to_set = model_override
         if not model_to_set:
-            try:
+            with contextlib.suppress(Exception):
                 config = Config.load()
                 model_to_set = config.get_default_model(self.agent_binary)
-            except Exception:
-                pass
 
         if model_to_set:
             valid_models: list[str] = []
@@ -446,11 +443,9 @@ class ACPAgent:
         # Apply mode override or config-defined default mode if set
         mode_to_set = mode_override
         if not mode_to_set:
-            try:
+            with contextlib.suppress(Exception):
                 config = Config.load()
                 mode_to_set = config.get_default_mode(self.agent_binary)
-            except Exception:
-                pass
 
         if mode_to_set:
             valid_modes: list[str] = []
@@ -490,13 +485,13 @@ class ACPAgent:
         if self._conn is None or self._session_id is None:
             raise RuntimeError("Agent not started")
 
-        from acp import text_block, resource_link_block
+        from acp import resource_link_block, text_block
         from acp.schema import (
-            TextContentBlock,
-            ImageContentBlock,
             AudioContentBlock,
-            ResourceContentBlock,
             EmbeddedResourceContentBlock,
+            ImageContentBlock,
+            ResourceContentBlock,
+            TextContentBlock,
         )
 
         blocks: list[
@@ -556,23 +551,17 @@ class ACPAgent:
 
     async def close_session(self) -> None:
         if self._conn is not None and self._session_id is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._conn.close_session(session_id=self._session_id)
-            except Exception:
-                pass
 
     async def stop(self) -> None:
         if self._conn:
-            try:
+            with contextlib.suppress(Exception):
                 await self._conn.close()
-            except Exception:
-                pass
             self._conn = None
         if self._transport_ctx:
-            try:
+            with contextlib.suppress(Exception):
                 await self._transport_ctx.__aexit__(None, None, None)
-            except Exception:
-                pass
             self._transport_ctx = None
         self._process = None
         self._session_id = None
