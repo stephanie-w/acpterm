@@ -338,19 +338,68 @@ class ACPAgent:
             if saved_session_id:
                 target = saved_session_id
 
+        session_resp = None
         if target:
-            session_resp = await self._conn.load_session(cwd=cwd, session_id=target)
-            self._session_id = target
-        else:
+            try:
+                agent_caps = getattr(init_resp, "agent_capabilities", None) or getattr(
+                    init_resp, "agentCapabilities", None
+                )
+                sess_caps = (
+                    getattr(agent_caps, "session_capabilities", None)
+                    or getattr(agent_caps, "sessionCapabilities", None)
+                    if agent_caps
+                    else None
+                )
+                can_resume = (
+                    bool(getattr(sess_caps, "resume", None)) if sess_caps else False
+                )
+
+                if can_resume:
+                    session_resp = await self._conn.resume_session(
+                        session_id=target, cwd=cwd
+                    )
+                else:
+                    session_resp = await self._conn.load_session(
+                        cwd=cwd, session_id=target
+                    )
+                self._session_id = target
+            except Exception as e:
+                from . import session_store
+
+                if not self._silent:
+                    _console.print(
+                        f"[yellow]Warning: Could not resume session '{target}' ({e}). Starting a new session...[/yellow]"
+                    )
+                session_store.remove(self.agent_binary, cwd, self.session_name)
+                target = None
+                session_resp = None
+
+        if session_resp is None:
             session_resp = await self._conn.new_session(cwd=cwd)
             self._session_id = session_resp.session_id if session_resp else None
+
         _debug_log(
             self._verbose, "load_session" if target else "new_session", session_resp
         )
         if not self._silent and session_resp:
             display_initial_session_info(session_resp)
 
+        # Store updated config options & modes in cache automatically
+        if session_resp:
+            from . import agent_cache
+
+            co = getattr(session_resp, "config_options", None) or getattr(
+                session_resp, "configOptions", None
+            )
+            modes = getattr(session_resp, "modes", None)
+            try:
+                agent_cache.store(self.agent_binary, config_options=co, modes=modes)
+            except Exception:
+                pass
+
         # Apply model override or config-defined default model if set
+        import difflib
+        from . import agent_cache
         from .config import Config
 
         model_to_set = model_override
@@ -362,15 +411,37 @@ class ACPAgent:
                 pass
 
         if model_to_set:
-            try:
-                await self.set_model(model_to_set)
-            except Exception as e:
-                # Do not fail start if setting the model fails (e.g. unsupported option/method)
+            valid_models: list[str] = []
+            co_opts = agent_cache.get_config_options(self.agent_binary) or []
+            for opt in co_opts:
+                if opt.get("id") == "model":
+                    valid_models = [
+                        o["id"] for o in opt.get("options", []) if o.get("id")
+                    ]
+
+            if valid_models and model_to_set not in valid_models:
+                matches = difflib.get_close_matches(
+                    model_to_set, valid_models, n=1, cutoff=0.5
+                )
                 if not self._silent:
-                    _console.print(
-                        f"[yellow]Warning: Failed to auto-set model"
-                        f" '{model_to_set}': {e}[/yellow]"
-                    )
+                    if matches:
+                        _console.print(
+                            f"[yellow]Warning: Model '{model_to_set}' is not recognized for agent '{self.agent_binary}'. Did you mean '{matches[0]}'?[/yellow]"
+                        )
+                    else:
+                        _console.print(
+                            f"[yellow]Warning: Model '{model_to_set}' is not recognized for agent '{self.agent_binary}'. Available models: {', '.join(valid_models)}[/yellow]"
+                        )
+            else:
+                try:
+                    await self.set_model(model_to_set)
+                except Exception as e:
+                    # Do not fail start if setting the model fails (e.g. unsupported option/method)
+                    if not self._silent:
+                        _console.print(
+                            f"[yellow]Warning: Failed to auto-set model"
+                            f" '{model_to_set}': {e}[/yellow]"
+                        )
 
         # Apply mode override or config-defined default mode if set
         mode_to_set = mode_override
@@ -382,15 +453,36 @@ class ACPAgent:
                 pass
 
         if mode_to_set:
-            try:
-                await self.set_mode(mode_to_set)
-            except Exception as e:
-                # Do not fail start if setting the mode fails (e.g. unsupported option/method)
+            valid_modes: list[str] = []
+            cached_modes = agent_cache.get_modes(self.agent_binary)
+            if cached_modes and cached_modes.get("available_modes"):
+                valid_modes = [
+                    m["id"] for m in cached_modes["available_modes"] if m.get("id")
+                ]
+
+            if valid_modes and mode_to_set not in valid_modes:
+                matches = difflib.get_close_matches(
+                    mode_to_set, valid_modes, n=1, cutoff=0.5
+                )
                 if not self._silent:
-                    _console.print(
-                        f"[yellow]Warning: Failed to auto-set mode"
-                        f" '{mode_to_set}': {e}[/yellow]"
-                    )
+                    if matches:
+                        _console.print(
+                            f"[yellow]Warning: Mode '{mode_to_set}' is not recognized for agent '{self.agent_binary}'. Did you mean '{matches[0]}'?[/yellow]"
+                        )
+                    else:
+                        _console.print(
+                            f"[yellow]Warning: Mode '{mode_to_set}' is not recognized for agent '{self.agent_binary}'. Available modes: {', '.join(valid_modes)}[/yellow]"
+                        )
+            else:
+                try:
+                    await self.set_mode(mode_to_set)
+                except Exception as e:
+                    # Do not fail start if setting the mode fails (e.g. unsupported option/method)
+                    if not self._silent:
+                        _console.print(
+                            f"[yellow]Warning: Failed to auto-set mode"
+                            f" '{mode_to_set}': {e}[/yellow]"
+                        )
 
     async def send_prompt(
         self, prompt: str, resources: list[Path] | None = None

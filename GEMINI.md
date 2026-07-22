@@ -23,6 +23,15 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Implement structured interactive form elicitation (`fs/create_elicitation`) using Rich terminal prompts
 - [x] Implement config show / config init commands for profile configuration management
 - [x] Implement `acpterm commands list` for agent slash command discovery
+- [x] Implement self-healing session loading/resuming with automatic fallback to new session on stale ID errors
+- [x] Implement `session/resume` vs `session/load` ACP protocol capability checking
+- [x] Implement `-r / --resume` flag to automatically target the most recently used session
+- [x] Track `last_used_at` timestamp in `session_store.py`
+- [x] Simplify CLI interface by removing redundant `sessions new` command
+- [x] Implement automatic silent cache sync on session creation and loading
+- [x] Remove redundant `--refresh` options across list commands
+- [x] Implement mode and model validation with fuzzy matching ("Did you mean...?")
+- [x] Implement shell `TAB` auto-completion callbacks for `-a`, `-s`, `-m`, and `--mode`
 
 ## 🛠️ Configuration Redesign
 

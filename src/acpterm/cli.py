@@ -35,15 +35,76 @@ def _run_async(coro: Any) -> None:
     asyncio.run(coro)
 
 
+def complete_agent(incomplete: str) -> list[str]:
+    from .config import Config
+
+    try:
+        config = Config.load()
+        agents = list(config.agents.keys())
+    except Exception:
+        agents = ["opencode", "kiro"]
+    return [a for a in agents if a.startswith(incomplete)]
+
+
+def complete_session(incomplete: str) -> list[str]:
+    cwd = str(Path.cwd().absolute())
+    sessions = session_store.list_sessions(cwd=cwd)
+    names = list(set(s.get("name", "") for s in sessions if s.get("name")))
+    return [n for n in names if n.startswith(incomplete)]
+
+
+def complete_model(ctx: typer.Context, incomplete: str) -> list[str]:
+    agent_binary = ctx.params.get("agent") or "opencode"
+    co_opts = agent_cache.get_config_options(agent_binary) or []
+    models = []
+    for opt in co_opts:
+        if opt.get("id") == "model":
+            models = [o["id"] for o in opt.get("options", []) if o.get("id")]
+    if not models:
+        from .config import Config
+
+        try:
+            config = Config.load()
+            models = [m["id"] for m in config.get_agent_models(agent_binary)]
+        except Exception:
+            pass
+    return [m for m in models if m.startswith(incomplete)]
+
+
+def complete_mode(ctx: typer.Context, incomplete: str) -> list[str]:
+    agent_binary = ctx.params.get("agent") or "opencode"
+    cached_modes = agent_cache.get_modes(agent_binary)
+    modes = []
+    if cached_modes and cached_modes.get("available_modes"):
+        modes = [m["id"] for m in cached_modes["available_modes"] if m.get("id")]
+    return [m for m in modes if m.startswith(incomplete)]
+
+
 @app.callback()
 def callback(
     ctx: typer.Context,
     agent: Annotated[
-        str, typer.Option("-a", "--agent", help="ACP agent binary name")
+        str,
+        typer.Option(
+            "-a",
+            "--agent",
+            help="ACP agent binary name",
+            autocompletion=complete_agent,
+        ),
     ] = "opencode",
     session: Annotated[
-        str | None, typer.Option("-s", "--session", help="Session name")
+        str | None,
+        typer.Option(
+            "-s",
+            "--session",
+            help="Session name",
+            autocompletion=complete_session,
+        ),
     ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option("-r", "--resume", help="Resume the most recently used session"),
+    ] = False,
     auto_yes: Annotated[
         bool, typer.Option("-y", "--yes", help="Auto-approve all permission requests")
     ] = False,
@@ -59,16 +120,38 @@ def callback(
     ] = False,
     model: Annotated[
         str | None,
-        typer.Option("-m", "--model", help="Active model override for the session"),
+        typer.Option(
+            "-m",
+            "--model",
+            help="Active model override for the session",
+            autocompletion=complete_model,
+        ),
     ] = None,
     mode: Annotated[
         str | None,
-        typer.Option("--mode", help="Active mode override for the session"),
+        typer.Option(
+            "--mode",
+            help="Active mode override for the session",
+            autocompletion=complete_mode,
+        ),
     ] = None,
 ) -> None:
+    cwd = str(Path.cwd().absolute())
+    resolved_session = session
+    if resume:
+        latest = session_store.get_latest(agent, cwd)
+        if latest:
+            resolved_session = latest["name"]
+            if verbose:
+                _console.print(
+                    f"[dim]Resuming last session: '{resolved_session}'[/dim]"
+                )
+        else:
+            resolved_session = session or "default"
+
     ctx.ensure_object(dict)
     ctx.obj["agent"] = agent
-    ctx.obj["session_name"] = session or "default"
+    ctx.obj["session_name"] = resolved_session or "default"
     ctx.obj["auto_yes"] = auto_yes
     ctx.obj["verbose"] = verbose
     ctx.obj["read_only"] = read_only
@@ -142,27 +225,6 @@ async def _run_prompt(
         raise typer.Exit(code=130)
     finally:
         await agent.stop()
-
-
-async def _create_session(
-    agent_obj: ACPAgent,
-    project_root: Path,
-    agent_binary: str,
-    session_name: str,
-) -> None:
-    await agent_obj.start(target=None)
-    try:
-        if agent_obj.session_id:
-            session_store.save(
-                agent_binary,
-                str(project_root.absolute()),
-                agent_obj.session_id,
-                session_name,
-            )
-            sid = agent_obj.session_id[:12]
-            typer.echo(f"Session created: {sid}... (name: {session_name})")
-    finally:
-        await agent_obj.stop()
 
 
 async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) -> None:
@@ -247,14 +309,11 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
 @models_app.command(name="list")
 def list_models(
     ctx: typer.Context,
-    refresh: Annotated[
-        bool, typer.Option("--refresh", help="Force re-fetch from agent")
-    ] = False,
 ) -> None:
     """List available models and show the currently selected one."""
     agent_binary = ctx.obj["agent"]
 
-    if refresh or not agent_cache.is_fresh(agent_binary):
+    if not agent_cache.is_fresh(agent_binary):
         _run_async(
             _fetch_and_cache_agent_info(
                 agent_binary, verbose=ctx.obj.get("verbose", False)
@@ -394,14 +453,11 @@ def set_model(
 @modes_app.command(name="list")
 def list_modes(
     ctx: typer.Context,
-    refresh: Annotated[
-        bool, typer.Option("--refresh", help="Force re-fetch from agent")
-    ] = False,
 ) -> None:
     """List available modes and show the currently active one."""
     agent_binary = ctx.obj["agent"]
 
-    if refresh or not agent_cache.is_fresh(agent_binary):
+    if not agent_cache.is_fresh(agent_binary):
         _run_async(
             _fetch_and_cache_agent_info(
                 agent_binary, verbose=ctx.obj.get("verbose", False)
@@ -522,14 +578,11 @@ def set_mode(
 @commands_app.command(name="list")
 def list_commands(
     ctx: typer.Context,
-    refresh: Annotated[
-        bool, typer.Option("--refresh", help="Force re-fetch from agent")
-    ] = False,
 ) -> None:
     """List available slash commands from the agent cache."""
     agent_binary = ctx.obj["agent"]
 
-    if refresh or not agent_cache.is_fresh(agent_binary):
+    if not agent_cache.is_fresh(agent_binary):
         _run_async(
             _fetch_and_cache_agent_info(
                 agent_binary, verbose=ctx.obj.get("verbose", False)
@@ -634,28 +687,6 @@ def init_config(
 
 
 # ── sessions ──────────────────────────────────────────────────────────────────
-
-
-@sessions_app.command()
-def new(
-    ctx: typer.Context,
-    name: Annotated[
-        str | None, typer.Option("--name", help="Named session identifier")
-    ] = None,
-) -> None:
-    """Create a new session (saves session ID locally)."""
-    agent_binary = ctx.obj["agent"]
-    session_name = name or ctx.obj["session_name"]
-    project_root = Path.cwd()
-    agent_obj = ACPAgent(
-        project_root=project_root,
-        agent_binary=agent_binary,
-        session_name=session_name,
-        verbose=ctx.obj.get("verbose", False),
-        read_only=ctx.obj.get("read_only", False),
-        silent=True,
-    )
-    _run_async(_create_session(agent_obj, project_root, agent_binary, session_name))
 
 
 @sessions_app.command(name="list")

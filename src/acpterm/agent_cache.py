@@ -57,12 +57,17 @@ def get_commands(agent_name: str) -> list[dict[str, str]] | None:
 
 
 def store(
-    agent_name: str, config_options: Any, modes: Any, commands: Any = None
+    agent_name: str,
+    config_options: Any = None,
+    modes: Any = None,
+    commands: Any = None,
 ) -> None:
     data = _read()
+    existing = data.get(agent_name, {})
 
-    co_list: list[dict[str, Any]] = []
-    if config_options:
+    co_list: list[dict[str, Any]] = existing.get("config_options", [])
+    if config_options is not None:
+        co_list = []
         for opt in config_options:
             val = getattr(opt, "current_value", None)
             if val is None:
@@ -77,8 +82,8 @@ def store(
                 }
             )
 
-    mode_dict: dict[str, Any] | None = None
-    if modes:
+    mode_dict: dict[str, Any] | None = existing.get("modes")
+    if modes is not None:
         current = getattr(modes, "current_mode_id", None) or getattr(
             modes, "currentModeId", None
         )
@@ -97,8 +102,9 @@ def store(
                 )
         mode_dict = {"current_mode_id": current, "available_modes": available_list}
 
-    cmd_list: list[dict[str, str]] = []
-    if commands:
+    cmd_list: list[dict[str, str]] = existing.get("commands", [])
+    if commands is not None:
+        cmd_list = []
         for cmd in commands:
             name = getattr(cmd, "name", None)
             desc = getattr(cmd, "description", None)

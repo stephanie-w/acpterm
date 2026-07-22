@@ -48,12 +48,16 @@ def save(
 ) -> None:
     data = _read()
     key = _make_key(agent_name, cwd, name)
+    existing = data.get(key, {})
+    now_iso = datetime.now(timezone.utc).isoformat()
+    created_at = existing.get("created_at", now_iso)
     data[key] = {
         "agent_name": agent_name,
         "cwd": cwd,
         "name": name,
         "session_id": session_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at,
+        "last_used_at": now_iso,
     }
     _write(data)
 
@@ -66,6 +70,22 @@ def remove(agent_name: str, cwd: str, name: str = DEFAULT_SESSION_NAME) -> bool:
         _write(data)
         return True
     return False
+
+
+def get_latest(agent_name: str, cwd: str) -> dict[str, Any] | None:
+    data = _read()
+    matching = [
+        e
+        for e in data.values()
+        if e.get("agent_name") == agent_name and e.get("cwd") == cwd
+    ]
+    if not matching:
+        return None
+    matching.sort(
+        key=lambda e: e.get("last_used_at") or e.get("created_at", ""),
+        reverse=True,
+    )
+    return matching[0]
 
 
 def list_sessions(

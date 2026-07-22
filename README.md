@@ -20,14 +20,14 @@ acpterm -a opencode exec "what does this repo do?"
 Create a named session and send prompts:
 
 ```bash
-acpterm -a opencode new --name my-session
 acpterm -a opencode prompt -s my-session "find the flaky test and fix it"
 ```
 
-Send follow-up prompts in the same session:
+Send follow-up prompts in the same session, or use `-r` to resume the last session:
 
 ```bash
 acpterm -a opencode prompt -s my-session "now add a regression test"
+acpterm -a opencode -r prompt "check the tests"
 ```
 
 ## Usage
@@ -42,6 +42,7 @@ acpterm [OPTIONS] COMMAND [ARGS]...
 |------|-------------|
 | `-a, --agent <name>` | ACP agent binary to spawn (default: `opencode`) |
 | `-s, --session <name>` | Session name for `prompt` (default: `default`) |
+| `-r, --resume` | Resume the most recently used session for this project |
 | `-m, --model <id>` | Override or set the active model for the session |
 | `--mode <id>` | Override or set the active mode for the session |
 | `-y, --yes` | Auto-approve all permission requests without prompting |
@@ -51,23 +52,15 @@ acpterm [OPTIONS] COMMAND [ARGS]...
 
 #### `prompt`
 
-Send a prompt to an agent. Saves the session for subsequent prompts.
+Send a prompt to an agent. Automatically creates or resumes the session.
 
 ```bash
 acpterm -a opencode prompt "refactor the auth module"
 acpterm -a opencode prompt -s api-session "implement token pagination"
+acpterm -a opencode -r prompt "continue implementation"
 acpterm -a opencode prompt -y "do stuff"              # auto-approve permissions
 echo "explain this repo" | acpterm prompt             # pipe prompt from stdin
 acpterm prompt --file prompt.md                       # load prompt from file
-```
-
-#### `new`
-
-Create a new session (saves the session ID locally at `~/.acpterm/sessions.json`).
-
-```bash
-acpterm -a opencode new                               # default session
-acpterm -a opencode new --name backend                # named session
 ```
 
 #### `exec`
