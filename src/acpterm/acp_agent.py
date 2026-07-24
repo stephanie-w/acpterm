@@ -105,6 +105,9 @@ class AgentClient:
                     or "call_default"
                 )
                 content_str = _format_content_blocks(content) if content else None
+                # Extract diff paths from content blocks for richer transcript
+                if content:
+                    self._record_diff_paths(content)
                 self._recorder.update_tool_call(
                     tool_call_id, status, title, content_str
                 )
@@ -126,6 +129,31 @@ class AgentClient:
                     with contextlib.suppress(Exception):
                         agent_cache.update_commands(self._agent_binary, cmds)
 
+    def _record_diff_paths(self, content_blocks: list[Any]) -> None:
+        """Extract file paths from diff content blocks and record as file operations."""
+        if not self._recorder:
+            return
+        for block in content_blocks:
+            block_type = getattr(block, "type", None)
+            if block_type != "diff":
+                continue
+            # v1: path field directly on the diff block
+            diff_path = getattr(block, "path", None)
+            if diff_path:
+                old_text = getattr(block, "old_text", None) or getattr(
+                    block, "oldText", None
+                )
+                op = "create" if old_text is None else "modify"
+                self._recorder.add_file_operation(op, diff_path)
+            # v2: changes[] array with structured operations
+            changes = getattr(block, "changes", None)
+            if changes:
+                for change in changes:
+                    operation = getattr(change, "operation", "modify")
+                    change_path = getattr(change, "path", None)
+                    if change_path:
+                        self._recorder.add_file_operation(operation, change_path)
+
     async def request_permission(
         self,
         session_id: str,
@@ -144,6 +172,8 @@ class AgentClient:
             if not self._silent:
                 _console.print("[dim]  Auto-approved (--yes)[/dim]")
             option_id = options[0].option_id if options else "allow_always"
+            if self._recorder:
+                self._recorder.add_permission(title, kind_str, "approved")
             return acp_schema.RequestPermissionResponse(
                 outcome=acp_schema.AllowedOutcome(
                     outcome="selected",
@@ -154,12 +184,16 @@ class AgentClient:
         approved = Confirm.ask("  Allow?", default=True)
         if approved and options:
             option_id = options[0].option_id
+            if self._recorder:
+                self._recorder.add_permission(title, kind_str, "approved")
             return acp_schema.RequestPermissionResponse(
                 outcome=acp_schema.AllowedOutcome(
                     outcome="selected",
                     option_id=option_id,
                 )
             )
+        if self._recorder:
+            self._recorder.add_permission(title, kind_str, "denied")
         return acp_schema.RequestPermissionResponse(
             outcome=acp_schema.DeniedOutcome(outcome="cancelled")
         )
@@ -172,6 +206,8 @@ class AgentClient:
         if not self._silent:
             file_path = Path(path)
             file_path.write_text(content)
+        if self._recorder:
+            self._recorder.add_file_operation("write", path)
         return acp_schema.WriteTextFileResponse()
 
     async def read_text_file(
@@ -191,6 +227,8 @@ class AgentClient:
             start = line - 1
             end = start + limit if limit else None
             lines = lines[start:end]
+        if self._recorder:
+            self._recorder.add_file_operation("read", path, line=line, limit=limit)
         return acp_schema.ReadTextFileResponse(content="\n".join(lines))
 
     async def create_terminal(

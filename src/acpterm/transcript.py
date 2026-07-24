@@ -1,7 +1,7 @@
 """Session transcript recorder for acpterm.
 
-Accumulates prompt, thoughts, tool calls, and final responses to export
-as formatted Markdown.
+Accumulates prompt, thoughts, tool calls, file operations, permissions,
+and final responses to export as formatted Markdown.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ class TranscriptRecorder:
         self.messages: list[str] = []
         self.tool_calls: dict[str, dict[str, Any]] = {}
         self.plan_entries: list[Any] = []
+        self.file_operations: list[dict[str, str | None]] = []
+        self.permissions: list[dict[str, str]] = []
         self.usage: dict[str, Any] | None = None
         self.stop_reason: str | None = None
 
@@ -75,6 +77,27 @@ class TranscriptRecorder:
         """Replace the current plan entries (each update is a full snapshot)."""
         self.plan_entries = entries
 
+    def add_file_operation(
+        self,
+        operation: str,
+        path: str,
+        *,
+        line: int | None = None,
+        limit: int | None = None,
+    ) -> None:
+        """Record a file system operation (read or write)."""
+        entry: dict[str, str | None] = {"operation": operation, "path": path}
+        if line is not None:
+            range_str = f"L{line}"
+            if limit is not None:
+                range_str += f"-L{line + limit - 1}"
+            entry["range"] = range_str
+        self.file_operations.append(entry)
+
+    def add_permission(self, title: str, kind: str, outcome: str) -> None:
+        """Record a permission request and its outcome."""
+        self.permissions.append({"title": title, "kind": kind, "outcome": outcome})
+
     def to_markdown(self) -> str:
         """Format the recorded session events as a clean Markdown document."""
         lines = []
@@ -126,6 +149,26 @@ class TranscriptRecorder:
                         lines.append(content_str)
                         lines.append("```")
                 lines.append("")
+
+        if self.file_operations:
+            lines.append("## File Operations")
+            for op in self.file_operations:
+                operation = op["operation"]
+                path = op["path"]
+                range_str = op.get("range")
+                suffix = f" ({range_str})" if range_str else ""
+                lines.append(f"- **{operation}** `{path}`{suffix}")
+            lines.append("")
+
+        if self.permissions:
+            lines.append("## Permissions")
+            for perm in self.permissions:
+                title = perm["title"]
+                kind = perm["kind"]
+                outcome = perm["outcome"]
+                icon = "✅" if outcome == "approved" else "❌"
+                lines.append(f"- {icon} **{title}** ({kind}) — {outcome}")
+            lines.append("")
 
         if self.messages:
             lines.append("## Agent Response")
