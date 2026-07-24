@@ -228,3 +228,4 @@ screenshots/
 .opencode/
 .agents/
 standards/ 
+demos/.eval_workspace/
