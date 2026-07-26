@@ -205,12 +205,17 @@ async def _run_prompt(
         transcript_recorder=recorder,
         permission_hooks=permission_hooks,
     )
-    await agent.start(
-        target=target_session_id,
-        load_existing=persist,
-        model_override=model_override,
-        mode_override=mode_override,
-    )
+    try:
+        await agent.start(
+            target=target_session_id,
+            load_existing=persist,
+            model_override=model_override,
+            mode_override=mode_override,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        _console.print(f"[red][error][/red] {e}")
+        raise typer.Exit(code=1) from None
+
     import time
 
     try:

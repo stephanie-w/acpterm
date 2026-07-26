@@ -12,6 +12,9 @@ from .hooks import HookDefinition
 CONFIG_FILE = Path.home() / ".acpterm" / "config.json"
 
 
+import shutil
+
+
 class Config(BaseModel):
     """Configuration schema for acpterm."""
 
@@ -21,6 +24,34 @@ class Config(BaseModel):
     default_modes: dict[str, str] = Field(default_factory=dict)
     max_prompt_chars: int = Field(default=100000)
     hooks: list[HookDefinition] = Field(default_factory=list)
+
+    def get_agent_command(self, agent_name: str) -> list[str]:
+        """Validate and resolve the full spawn command for an agent.
+
+        Looks up ``agent_name`` in ``self.agents``.
+        If found, returns the configured command split into args.
+        Falls back to the bare agent binary name if found on PATH.
+
+        Raises:
+            ValueError: If agent_name is not registered in config.json and not found on PATH.
+        """
+        if agent_name in self.agents:
+            command_str = self.agents[agent_name]
+        else:
+            if not shutil.which(agent_name):
+                configured = (
+                    ", ".join(f"'{a}'" for a in self.agents.keys()) or "none"
+                )
+                msg = (
+                    f"Agent '{agent_name}' is not configured in {CONFIG_FILE} under 'agents' "
+                    f"and was not found on your system PATH.\n\n"
+                    f"Configured agents in config: {configured}\n\n"
+                    f"To configure '{agent_name}', add it to {CONFIG_FILE}:\n"
+                    f'  "agents": {{\n    "{agent_name}": "path/to/{agent_name} acp"\n  }}'
+                )
+                raise ValueError(msg)
+            command_str = agent_name
+        return shlex.split(command_str)
 
     def get_default_model(self, agent_name: str) -> str | None:
         """Get the configured default model for the agent."""
@@ -80,12 +111,5 @@ class Config(BaseModel):
 
 
 def resolve_agent_command(agent_name: str) -> list[str]:
-    """Resolve the full spawn command for an agent.
-
-    Looks up ``agent_name`` in ``~/.acpterm/config.json`` under the ``agents`` key.
-    If found, returns the configured command split into args.
-    Falls back to the bare agent binary name.
-    """
-    config = Config.load()
-    command_str = config.agents.get(agent_name, agent_name)
-    return shlex.split(command_str)
+    """Resolve the full spawn command for an agent using the loaded Config model."""
+    return Config.load().get_agent_command(agent_name)
