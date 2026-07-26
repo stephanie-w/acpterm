@@ -229,3 +229,4 @@ screenshots/
 .agents/
 standards/ 
 demos/.eval_workspace/
+demos/.hooks_workspace/

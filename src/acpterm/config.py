@@ -6,6 +6,8 @@ import shlex
 
 from pydantic import BaseModel, Field
 
+from .hooks import HookDefinition
+
 
 CONFIG_FILE = Path.home() / ".acpterm" / "config.json"
 
@@ -18,6 +20,7 @@ class Config(BaseModel):
     default_models: dict[str, str] = Field(default_factory=dict)
     default_modes: dict[str, str] = Field(default_factory=dict)
     max_prompt_chars: int = Field(default=100000)
+    hooks: list[HookDefinition] = Field(default_factory=list)
 
     def get_default_model(self, agent_name: str) -> str | None:
         """Get the configured default model for the agent."""

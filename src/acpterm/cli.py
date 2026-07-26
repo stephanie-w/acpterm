@@ -171,7 +171,11 @@ async def _run_prompt(
     export: Path | None = None,
     model_override: str | None = None,
     mode_override: str | None = None,
+    on_turn_end: str | None = None,
+    chain_prompt: str | None = None,
 ) -> None:
+    from .config import Config
+    from .hooks import HookDefinition, HookEvent, run_hooks
     from .transcript import TranscriptRecorder
 
     project_root = Path.cwd()
@@ -212,6 +216,32 @@ async def _run_prompt(
                     f"\n[red][error] Failed to export transcript: {e}[/red]",
                     style="bold",
                 )
+
+        # Collect configured and CLI-provided hooks
+        config = Config.load()
+        hooks = list(config.hooks)
+
+        if on_turn_end:
+            hooks.append(HookDefinition(on="turn_end", run=on_turn_end))
+        if chain_prompt:
+            hooks.append(HookDefinition(on="turn_end", chain_prompt=chain_prompt))
+
+        if hooks:
+            event = HookEvent(
+                event_type="turn_end",
+                session_id=agent.session_id,
+                agent_name=agent_binary,
+                stop_reason=recorder.stop_reason if recorder else "end_turn",
+                transcript_path=export,
+                prompt_text=prompt_text,
+                cwd=project_root,
+            )
+            chained = await run_hooks(event, hooks, verbose=verbose)
+            for next_prompt in chained:
+                _console.print(
+                    f"\n[cyan][chain][/cyan] Sending chained prompt: '{next_prompt}'"
+                )
+                await agent.send_prompt(next_prompt)
     except (KeyboardInterrupt, asyncio.CancelledError):
         _console.print(
             "\n[yellow]Interrupted. Cancelling agent execution gracefully...[/yellow]"
@@ -876,6 +906,21 @@ def prompt(
             resolve_path=True,
         ),
     ] = None,
+    on_turn_end: Annotated[
+        str | None,
+        typer.Option(
+            "--on-turn-end",
+            "-k",
+            help="Shell command or script to execute when turn completes",
+        ),
+    ] = None,
+    chain_prompt: Annotated[
+        str | None,
+        typer.Option(
+            "--chain-prompt",
+            help="Follow-up prompt to send automatically when turn completes",
+        ),
+    ] = None,
 ) -> None:
     """Send a prompt to the agent (saves session for subsequent prompts)."""
     prompt_text = _resolve_prompt_text(prompt, file)
@@ -892,6 +937,8 @@ def prompt(
             export=export,
             model_override=ctx.obj.get("model"),
             mode_override=ctx.obj.get("mode"),
+            on_turn_end=on_turn_end,
+            chain_prompt=chain_prompt,
         )
     )
 
@@ -930,6 +977,21 @@ def exec(
             resolve_path=True,
         ),
     ] = None,
+    on_turn_end: Annotated[
+        str | None,
+        typer.Option(
+            "--on-turn-end",
+            "-k",
+            help="Shell command or script to execute when turn completes",
+        ),
+    ] = None,
+    chain_prompt: Annotated[
+        str | None,
+        typer.Option(
+            "--chain-prompt",
+            help="Follow-up prompt to send automatically when turn completes",
+        ),
+    ] = None,
 ) -> None:
     """One-shot prompt (no session persistence)."""
     prompt_text = _resolve_prompt_text(prompt, file)
@@ -945,6 +1007,8 @@ def exec(
             export=export,
             model_override=ctx.obj.get("model"),
             mode_override=ctx.obj.get("mode"),
+            on_turn_end=on_turn_end,
+            chain_prompt=chain_prompt,
         )
     )
 
