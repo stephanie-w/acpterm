@@ -19,6 +19,10 @@ When evaluating a transcript, pay close attention to the following sections:
 - **Verify Ground Truth**: Do not just trust the text in the "Agent Response". Look at the "File Operations" to ensure files were created/modified if the task required it.
 - **Be Objective**: Code must follow the letter and spirit of each rule. Even subtle violations (like using `list` as a default parameter value in a helper function nested inside the main function) must count as a failure.
 - **Explain Every Verdict**: For every PASS/FAIL, provide a concise, high-signal explanation referencing specific code lines or actions.
+- **Assess Token Efficiency**: Check the `## Metadata` and `## Tools Called` sections to assess if the agent was optimal. Flag issues like:
+  - Non-surgical/excessive edits (rewriting an entire file for a 5-line change).
+  - Redundant file reads (reading the same file repeatedly).
+  - Bloated responses (lengthy text explanations where concise updates were requested).
 
 ## 3. Strict Quality Anti-Patterns to Check (Python Projects)
 
@@ -69,6 +73,12 @@ Your evaluation response MUST follow this structured format:
 ## File Operations & Execution Summary
 - **Files Modified/Created**: List what was written and verify it matches expectations.
 - **Workflow Compliance**: Did the agent request permissions appropriately? Were any actions denied?
+
+## Token Efficiency & Cost Analysis
+- **Context Tokens Used**: X tokens (specify percentage of window if available in metadata)
+- **Estimated Turn Cost**: $X.XX USD (or other currency specified)
+- **Efficiency Rating**: [HIGH | MEDIUM | LOW]
+- **Efficiency Rationale**: Explain why the rating was given (e.g. "Surgical file edits and optimal tool calls" or "Excessive/redundant file reads observed").
 
 ## Final Scoring
 - **Total Score**: X / 6 rules passed
