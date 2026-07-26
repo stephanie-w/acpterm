@@ -13,8 +13,6 @@ from .hooks import HookDefinition
 CONFIG_FILE = Path.home() / ".acpterm" / "config.json"
 
 
-
-
 class Config(BaseModel):
     """Configuration schema for acpterm."""
 
@@ -78,8 +76,16 @@ class Config(BaseModel):
                 on failure or if the file does not exist.
         """
         if CONFIG_FILE.exists():
-            with contextlib.suppress(Exception):
-                return cls.model_validate_json(CONFIG_FILE.read_text())
+            try:
+                return cls.model_validate_json(CONFIG_FILE.read_text(encoding="utf-8"))
+            except Exception as e:
+                import sys
+
+                print(
+                    f"Warning: Failed to parse configuration file {CONFIG_FILE}: {e}\n"
+                    f"Falling back to default configuration.",
+                    file=sys.stderr,
+                )
         return cls()
 
     def save(self) -> None:

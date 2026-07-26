@@ -323,8 +323,10 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
         field_meta={},
     )
 
+    import os
+
     cmd = resolve_agent_command(agent_binary)
-    transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
+    transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:], env=dict(os.environ))
     reader, writer, _process = await transport_ctx.__aenter__()  # type: ignore[func-returns-value]
     conn = ClientSideConnection(CachingClient(silent=True), writer, reader)
     try:

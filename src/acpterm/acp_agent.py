@@ -421,8 +421,12 @@ class ACPAgent:
             permission_hooks=self._permission_hooks,
             project_root=self.project_root_path,
         )
+        import os
+
         cmd = resolve_agent_command(self.agent_binary)
-        self._transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
+        self._transport_ctx = spawn_stdio_transport(
+            cmd[0], *cmd[1:], env=dict(os.environ)
+        )
         reader, writer, self._process = await self._transport_ctx.__aenter__()  # type: ignore[func-returns-value]
 
         self._conn = ClientSideConnection(client, writer, reader)
