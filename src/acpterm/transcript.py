@@ -6,6 +6,7 @@ and final responses to export as formatted Markdown.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -33,13 +34,21 @@ class TranscriptRecorder:
         """Add a chunk of message content."""
         self.messages.append(text)
 
-    def add_tool_call(self, tool_call_id: str, title: str, kind: str) -> None:
+    def add_tool_call(
+        self,
+        tool_call_id: str,
+        title: str,
+        kind: str,
+        raw_input: Any | None = None,
+    ) -> None:
         """Initialize a recorded tool call."""
         self.tool_calls[tool_call_id] = {
             "title": title,
             "kind": kind,
             "status": "pending",
             "content": [],
+            "raw_input": raw_input,
+            "raw_output": None,
         }
 
     def update_tool_call(
@@ -48,6 +57,7 @@ class TranscriptRecorder:
         status: str | None = None,
         title: str | None = None,
         content: str | None = None,
+        raw_output: Any | None = None,
     ) -> None:
         """Update an existing tool call's status or append output content."""
         if tool_call_id not in self.tool_calls:
@@ -56,6 +66,8 @@ class TranscriptRecorder:
                 "kind": "other",
                 "status": "pending",
                 "content": [],
+                "raw_input": None,
+                "raw_output": None,
             }
         tc = self.tool_calls[tool_call_id]
         if status:
@@ -64,6 +76,8 @@ class TranscriptRecorder:
             tc["title"] = title
         if content:
             tc["content"].append(content)
+        if raw_output:
+            tc["raw_output"] = raw_output
 
     def set_usage(self, usage: dict[str, Any]) -> None:
         """Set token usage metadata."""
@@ -142,12 +156,23 @@ class TranscriptRecorder:
                 status = tc["status"]
                 kind = tc["kind"]
                 lines.append(f"### `{title}` ({kind}) - {status}")
+                if tc.get("raw_input"):
+                    lines.append("**Raw Input**:")
+                    lines.append("```json")
+                    lines.append(json.dumps(tc["raw_input"], indent=2))
+                    lines.append("```")
                 if tc["content"]:
                     content_str = "\n".join(tc["content"]).strip()
                     if content_str:
+                        lines.append("**Output Console**:")
                         lines.append("```")
                         lines.append(content_str)
                         lines.append("```")
+                if tc.get("raw_output"):
+                    lines.append("**Raw Output**:")
+                    lines.append("```json")
+                    lines.append(json.dumps(tc["raw_output"], indent=2))
+                    lines.append("```")
                 lines.append("")
 
         if self.file_operations:

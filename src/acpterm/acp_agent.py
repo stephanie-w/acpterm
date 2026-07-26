@@ -92,7 +92,12 @@ class AgentClient:
                     or getattr(update, "toolCallId", None)
                     or "call_default"
                 )
-                self._recorder.add_tool_call(tool_call_id, title, kind_str)
+                raw_input = getattr(update, "raw_input", None) or getattr(
+                    update, "rawInput", None
+                )
+                self._recorder.add_tool_call(
+                    tool_call_id, title, kind_str, raw_input=raw_input
+                )
             elif session_update == "tool_call_update":
                 status = getattr(update, "status", None)
                 title = getattr(update, "title", None)
@@ -105,11 +110,14 @@ class AgentClient:
                     or "call_default"
                 )
                 content_str = _format_content_blocks(content) if content else None
+                raw_output = getattr(update, "raw_output", None) or getattr(
+                    update, "rawOutput", None
+                )
                 # Extract diff paths from content blocks for richer transcript
                 if content:
                     self._record_diff_paths(content)
                 self._recorder.update_tool_call(
-                    tool_call_id, status, title, content_str
+                    tool_call_id, status, title, content_str, raw_output=raw_output
                 )
             elif session_update == "usage_update":
                 used = getattr(update, "used", None)
