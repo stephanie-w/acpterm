@@ -195,8 +195,15 @@ async def _run_prompt(
         model_override=model_override,
         mode_override=mode_override,
     )
+    import time
+
     try:
+        start_time = time.monotonic()
         await agent.send_prompt(prompt_text, resources=resources)
+        duration_seconds = time.monotonic() - start_time
+        if recorder:
+            recorder.set_duration(duration_seconds)
+
         if persist and agent.session_id:
             session_store.save(
                 agent_binary,
@@ -234,6 +241,7 @@ async def _run_prompt(
                 stop_reason=recorder.stop_reason if recorder else "end_turn",
                 transcript_path=export,
                 prompt_text=prompt_text,
+                duration_seconds=duration_seconds,
                 cwd=project_root,
             )
             chained = await run_hooks(event, hooks, verbose=verbose)

@@ -162,6 +162,69 @@ You can raise this limit by configuring `max_prompt_chars` in your configuration
 }
 ```
 
+## Lifecycle Hooks & Prompt Chaining
+
+`acpterm` supports event-driven hooks that execute shell commands or chain follow-up prompts when an agent turn completes.
+
+### 1. CLI Usage
+
+Run a shell command or script when the turn completes using `-k` / `--on-turn-end`:
+
+```bash
+acpterm -a opencode exec "refactor the auth module" -k "uv run ruff format"
+```
+
+Automatically chain a follow-up prompt to the agent:
+
+```bash
+acpterm -a opencode exec "implement data validation" --chain-prompt "Now generate pytest unit tests for this code."
+```
+
+Combine transcript export with performance monitoring:
+
+```bash
+SLOW_THRESHOLD_SECONDS=10.0 acpterm -a opencode exec "build the CLI features" \
+  --export transcript.md \
+  -k "python3 scripts/monitor_slow_response.py"
+```
+
+### 2. Environment Variables Passed to Hook Scripts
+
+When a hook script runs, `acpterm` populates turn context as environment variables:
+
+| Environment Variable | Description |
+| :--- | :--- |
+| `ACPTERM_EVENT` | Event trigger type (`turn_end`, `tool_call`, `permission`) |
+| `ACPTERM_SESSION_ID` | Active session ID |
+| `ACPTERM_AGENT` | Agent binary name (`opencode`, `kiro`, etc.) |
+| `ACPTERM_STOP_REASON` | Turn stop reason (`end_turn`, `max_tokens`, `refusal`) |
+| `ACPTERM_TRANSCRIPT` | Absolute path to exported Markdown transcript (if specified) |
+| `ACPTERM_PROMPT` | Original prompt text sent in the turn |
+| `ACPTERM_DURATION_SECONDS` | Total turn execution time in seconds |
+| `ACPTERM_CWD` | Absolute path to project working directory |
+
+### 3. Global Configuration
+
+Define permanent default hooks in `~/.acpterm/config.json`:
+
+```json
+{
+  "hooks": [
+    {
+      "name": "auto-format",
+      "on": "turn_end",
+      "run": "uv run ruff format"
+    },
+    {
+      "name": "slow-response-alert",
+      "on": "turn_end",
+      "condition": "duration > 10.0",
+      "run": "python3 scripts/monitor_slow_response.py"
+    }
+  ]
+}
+```
+
 ## Session Storage
 
 Sessions are persisted in `~/.acpterm/sessions.json`, keyed by agent name, working

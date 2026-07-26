@@ -40,6 +40,7 @@ class HookEvent(BaseModel):
     stop_reason: str | None = None
     transcript_path: Path | None = None
     prompt_text: str | None = None
+    duration_seconds: float | None = None
     cwd: Path = Field(default_factory=Path.cwd)
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -96,6 +97,9 @@ async def run_hooks(
         str(event.transcript_path.absolute()) if event.transcript_path else ""
     )
     env["ACPTERM_PROMPT"] = event.prompt_text or ""
+    env["ACPTERM_DURATION_SECONDS"] = (
+        f"{event.duration_seconds:.2f}" if event.duration_seconds is not None else ""
+    )
     env["ACPTERM_CWD"] = str(event.cwd.absolute())
 
     context = {
@@ -105,6 +109,7 @@ async def run_hooks(
         "stop_reason": event.stop_reason,
         "transcript": str(event.transcript_path) if event.transcript_path else "",
         "prompt": event.prompt_text,
+        "duration": event.duration_seconds,
     }
 
     for hook in matching_hooks:

@@ -25,6 +25,7 @@ class TranscriptRecorder:
         self.permissions: list[dict[str, str]] = []
         self.usage: dict[str, Any] | None = None
         self.stop_reason: str | None = None
+        self.duration_seconds: float | None = None
 
     def add_thought(self, text: str) -> None:
         """Add a chunk of thinking content."""
@@ -86,6 +87,10 @@ class TranscriptRecorder:
     def set_stop_reason(self, reason: str) -> None:
         """Set the turn's final stop reason."""
         self.stop_reason = reason
+
+    def set_duration(self, seconds: float) -> None:
+        """Set the turn's execution duration in seconds."""
+        self.duration_seconds = seconds
 
     def set_plan(self, entries: list[Any]) -> None:
         """Replace the current plan entries (each update is a full snapshot)."""
@@ -203,6 +208,8 @@ class TranscriptRecorder:
         if self.stop_reason:
             lines.append("## Metadata")
             lines.append(f"- **Stop Reason**: {self.stop_reason}")
+            if self.duration_seconds is not None:
+                lines.append(f"- **Duration**: {self.duration_seconds:.2f} seconds")
             if self.usage:
                 used = self.usage.get("used")
                 size = self.usage.get("size")
