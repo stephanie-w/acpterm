@@ -5,6 +5,7 @@ import contextlib
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any
+import warnings
 
 from acp import schema as acp_schema
 from acp.client.connection import ClientSideConnection
@@ -21,6 +22,10 @@ from .output import (
 )
 from .session_store import get as get_saved_session
 from .transcript import TranscriptRecorder
+
+
+# Suppress serialization UserWarnings emitted by Pydantic for experimental ACP extension fields (e.g. auth)
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 
 if False:  # TYPE_CHECKING
@@ -403,6 +408,7 @@ class ACPAgent:
             ),
             terminal=True,
             plan=acp_schema.PlanCapabilities(),
+            auth=acp_schema.AuthCapabilities(terminal=False),
             field_meta={},
         )
 

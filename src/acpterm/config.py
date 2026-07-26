@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 import shlex
+import shutil
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +13,6 @@ from .hooks import HookDefinition
 CONFIG_FILE = Path.home() / ".acpterm" / "config.json"
 
 
-import shutil
 
 
 class Config(BaseModel):
@@ -39,9 +39,7 @@ class Config(BaseModel):
             command_str = self.agents[agent_name]
         else:
             if not shutil.which(agent_name):
-                configured = (
-                    ", ".join(f"'{a}'" for a in self.agents.keys()) or "none"
-                )
+                configured = ", ".join(f"'{a}'" for a in self.agents.keys()) or "none"
                 msg = (
                     f"Agent '{agent_name}' is not configured in {CONFIG_FILE} under 'agents' "
                     f"and was not found on your system PATH.\n\n"
