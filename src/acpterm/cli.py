@@ -173,6 +173,7 @@ async def _run_prompt(
     mode_override: str | None = None,
     on_turn_end: str | None = None,
     chain_prompt: str | None = None,
+    on_permission: str | None = None,
 ) -> None:
     from .config import Config
     from .hooks import HookDefinition, HookEvent, run_hooks
@@ -180,6 +181,20 @@ async def _run_prompt(
 
     project_root = Path.cwd()
     recorder = TranscriptRecorder(prompt_text, resources=resources) if export else None
+
+    # Collect configured and CLI-provided hooks
+    config = Config.load()
+    hooks = list(config.hooks)
+
+    if on_turn_end:
+        hooks.append(HookDefinition(on="turn_end", run=on_turn_end))
+    if chain_prompt:
+        hooks.append(HookDefinition(on="turn_end", chain_prompt=chain_prompt))
+    if on_permission:
+        hooks.append(HookDefinition(on="permission", run=on_permission))
+
+    permission_hooks = [h for h in hooks if h.on == "permission"]
+
     agent = ACPAgent(
         project_root=project_root,
         agent_binary=agent_binary,
@@ -188,6 +203,7 @@ async def _run_prompt(
         verbose=verbose,
         read_only=read_only,
         transcript_recorder=recorder,
+        permission_hooks=permission_hooks,
     )
     await agent.start(
         target=target_session_id,
@@ -224,15 +240,7 @@ async def _run_prompt(
                     style="bold",
                 )
 
-        # Collect configured and CLI-provided hooks
-        config = Config.load()
-        hooks = list(config.hooks)
-
-        if on_turn_end:
-            hooks.append(HookDefinition(on="turn_end", run=on_turn_end))
-        if chain_prompt:
-            hooks.append(HookDefinition(on="turn_end", chain_prompt=chain_prompt))
-
+        # Collect turn_end hooks
         if hooks:
             event = HookEvent(
                 event_type="turn_end",
@@ -929,6 +937,14 @@ def prompt(
             help="Follow-up prompt to send automatically when turn completes",
         ),
     ] = None,
+    on_permission: Annotated[
+        str | None,
+        typer.Option(
+            "--on-permission",
+            "-p",
+            help="Policy hook command to evaluate permission requests (exit 0=allow, 1=deny, 2=fallback)",
+        ),
+    ] = None,
 ) -> None:
     """Send a prompt to the agent (saves session for subsequent prompts)."""
     prompt_text = _resolve_prompt_text(prompt, file)
@@ -947,6 +963,7 @@ def prompt(
             mode_override=ctx.obj.get("mode"),
             on_turn_end=on_turn_end,
             chain_prompt=chain_prompt,
+            on_permission=on_permission,
         )
     )
 
@@ -1000,6 +1017,14 @@ def exec(
             help="Follow-up prompt to send automatically when turn completes",
         ),
     ] = None,
+    on_permission: Annotated[
+        str | None,
+        typer.Option(
+            "--on-permission",
+            "-p",
+            help="Policy hook command to evaluate permission requests (exit 0=allow, 1=deny, 2=fallback)",
+        ),
+    ] = None,
 ) -> None:
     """One-shot prompt (no session persistence)."""
     prompt_text = _resolve_prompt_text(prompt, file)
@@ -1017,6 +1042,7 @@ def exec(
             mode_override=ctx.obj.get("mode"),
             on_turn_end=on_turn_end,
             chain_prompt=chain_prompt,
+            on_permission=on_permission,
         )
     )
 

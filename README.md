@@ -180,6 +180,18 @@ Automatically chain a follow-up prompt to the agent:
 acpterm -a opencode exec "implement data validation" --chain-prompt "Now generate pytest unit tests for this code."
 ```
 
+Dynamic Permission Policy Hooks (`-p` / `--on-permission`):
+
+Evaluate file/command permissions dynamically using a policy script:
+
+```bash
+acpterm -a opencode exec "refactor code" -p "python3 scripts/permission_policy.py"
+```
+
+* **Exit Code 0**: Auto-Approve (Allowed)
+* **Exit Code 1**: Auto-Deny (Cancelled)
+* **Exit Code 2**: Fallback (Interactive terminal prompt)
+
 Combine transcript export with performance monitoring:
 
 ```bash
@@ -201,6 +213,9 @@ When a hook script runs, `acpterm` populates turn context as environment variabl
 | `ACPTERM_TRANSCRIPT` | Absolute path to exported Markdown transcript (if specified) |
 | `ACPTERM_PROMPT` | Original prompt text sent in the turn |
 | `ACPTERM_DURATION_SECONDS` | Total turn execution time in seconds |
+| `ACPTERM_PERMISSION_TITLE` | Description of the requested permission (e.g. `Write text file src/auth.py`) |
+| `ACPTERM_PERMISSION_KIND` | Permission operation category (`read`, `write`, `execute`, `delete`) |
+| `ACPTERM_PERMISSION_PATH` | Path of file/resource affected by permission request |
 | `ACPTERM_CWD` | Absolute path to project working directory |
 
 ### 3. Global Configuration
@@ -214,6 +229,11 @@ Define permanent default hooks in `~/.acpterm/config.json`:
       "name": "auto-format",
       "on": "turn_end",
       "run": "uv run ruff format"
+    },
+    {
+      "name": "path-policy",
+      "on": "permission",
+      "run": "python3 scripts/permission_policy.py"
     },
     {
       "name": "slow-response-alert",

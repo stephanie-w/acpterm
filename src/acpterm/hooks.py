@@ -27,7 +27,8 @@ class HookDefinition(BaseModel):
         default=None, description="Follow-up prompt to chain to the agent"
     )
     condition: str | None = Field(
-        default=None, description="Condition expression, e.g. stop_reason == 'end_turn'"
+        default=None,
+        description="Condition expression, e.g. stop_reason == 'end_turn'",
     )
 
 
@@ -164,3 +165,94 @@ async def run_hooks(
             chained_prompts.append(prompt_str)
 
     return chained_prompts
+
+
+async def run_permission_hook(
+    event: HookEvent,
+    hooks: list[HookDefinition],
+    *,
+    verbose: bool = False,
+) -> int | None:
+    """Evaluate permission hooks for a permission event.
+
+    Args:
+        event: The HookEvent containing permission details in `extra`.
+        hooks: List of HookDefinition candidates to evaluate.
+        verbose: Whether to print detailed execution logs.
+
+    Returns:
+        int | None: Exit code of the first matching hook (0 = allow, 1 = deny, 2 = fallback),
+        or None if no matching hook ran.
+    """
+    matching_hooks = [h for h in hooks if h.on == "permission"]
+    if not matching_hooks:
+        return None
+
+    env = os.environ.copy()
+    env["ACPTERM_EVENT"] = "permission"
+    env["ACPTERM_SESSION_ID"] = event.session_id or ""
+    env["ACPTERM_AGENT"] = event.agent_name
+    env["ACPTERM_PERMISSION_TITLE"] = str(event.extra.get("title", ""))
+    env["ACPTERM_PERMISSION_KIND"] = str(event.extra.get("kind", ""))
+    env["ACPTERM_PERMISSION_PATH"] = str(event.extra.get("path", ""))
+    env["ACPTERM_CWD"] = str(event.cwd.absolute())
+
+    context = {
+        "event": "permission",
+        "session_id": event.session_id,
+        "agent": event.agent_name,
+        "title": event.extra.get("title", ""),
+        "kind": event.extra.get("kind", ""),
+        "path": event.extra.get("path", ""),
+    }
+
+    for hook in matching_hooks:
+        hook_label = hook.name or hook.run or "permission_hook"
+
+        if hook.condition and not _eval_condition(hook.condition, context):
+            if verbose:
+                _console.print(
+                    f"[dim][hook][/dim] Skipped '{hook_label}' (condition '{hook.condition}' not met)"
+                )
+            continue
+
+        if hook.run:
+            if verbose:
+                _console.print(
+                    f"[dim][hook][/dim] Evaluating permission hook '{hook_label}'..."
+                )
+
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    hook.run,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                    cwd=event.cwd,
+                )
+                _stdout, _stderr = await proc.communicate()
+
+                if proc.returncode == 0:
+                    _console.print(
+                        f"[green][perm:allowed][/green] Approved by policy hook '{hook_label}'"
+                    )
+                    return 0
+                if proc.returncode == 1:
+                    _console.print(
+                        f"[red][perm:denied][/red] Denied by policy hook '{hook_label}'"
+                    )
+                    return 1
+                if proc.returncode == 2:
+                    if verbose:
+                        _console.print(
+                            f"[dim][perm:fallback][/dim] Fallback requested by hook '{hook_label}'"
+                        )
+                    return 2
+                _console.print(
+                    f"[red][hook:failed][/red] Permission hook '{hook_label}' exited with code {proc.returncode}"
+                )
+                return proc.returncode
+            except Exception as e:
+                _console.print(f"[red][hook:error][/red] Permission hook error: {e}")
+
+    return None

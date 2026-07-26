@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from .config import resolve_agent_command
+from .hooks import HookDefinition
 from .output import (
     display_initial_session_info,
     format_session_update,
@@ -20,6 +21,10 @@ from .output import (
 )
 from .session_store import get as get_saved_session
 from .transcript import TranscriptRecorder
+
+
+if False:  # TYPE_CHECKING
+    from .hooks import HookDefinition
 
 
 PROTOCOL_VERSION = 1
@@ -49,12 +54,16 @@ class AgentClient:
         read_only: bool = False,
         recorder: TranscriptRecorder | None = None,
         agent_binary: str = "opencode",
+        permission_hooks: list[HookDefinition] | None = None,
+        project_root: Path | None = None,
     ) -> None:
         self._auto_approve = auto_approve
         self._silent = silent
         self._read_only = read_only
         self._recorder = recorder
         self._agent_binary = agent_binary
+        self._permission_hooks = permission_hooks or []
+        self._project_root = project_root or Path.cwd()
 
     def on_connect(self, conn: Any) -> None:
         pass
@@ -172,9 +181,47 @@ class AgentClient:
         title = getattr(tool_call, "title", "unknown") or "unknown"
         kind = getattr(tool_call, "kind", None)
         kind_str = getattr(kind, "value", str(kind)) if kind else "unknown"
+        target_path = getattr(tool_call, "path", None) or getattr(
+            tool_call, "uri", None
+        )
 
         if not self._silent:
             _console.print(f"\n[yellow][perm][/yellow] {title} [dim]({kind_str})[/dim]")
+
+        # Check for permission hooks if defined
+        if self._permission_hooks:
+            from .hooks import HookEvent, run_permission_hook
+
+            event = HookEvent(
+                event_type="permission",
+                session_id=session_id,
+                agent_name=self._agent_binary,
+                cwd=self._project_root,
+                extra={
+                    "title": title,
+                    "kind": kind_str,
+                    "path": str(target_path) if target_path else "",
+                },
+            )
+            hook_code = await run_permission_hook(
+                event, self._permission_hooks, verbose=not self._silent
+            )
+            if hook_code == 0:
+                option_id = options[0].option_id if options else "allow_always"
+                if self._recorder:
+                    self._recorder.add_permission(title, kind_str, "approved")
+                return acp_schema.RequestPermissionResponse(
+                    outcome=acp_schema.AllowedOutcome(
+                        outcome="selected",
+                        option_id=option_id,
+                    )
+                )
+            if hook_code == 1:
+                if self._recorder:
+                    self._recorder.add_permission(title, kind_str, "denied")
+                return acp_schema.RequestPermissionResponse(
+                    outcome=acp_schema.DeniedOutcome(outcome="cancelled")
+                )
 
         if self._silent or self._auto_approve:
             if not self._silent:
@@ -316,6 +363,7 @@ class ACPAgent:
         read_only: bool = False,
         silent: bool = False,
         transcript_recorder: TranscriptRecorder | None = None,
+        permission_hooks: list[HookDefinition] | None = None,
     ) -> None:
         self.project_root_path = project_root
         self.agent_binary = agent_binary
@@ -325,6 +373,7 @@ class ACPAgent:
         self._read_only = read_only
         self._silent = silent
         self._transcript_recorder = transcript_recorder
+        self._permission_hooks = permission_hooks or []
 
         self._conn: ClientSideConnection | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -363,6 +412,8 @@ class ACPAgent:
             silent=self._silent,
             recorder=self._transcript_recorder,
             agent_binary=self.agent_binary,
+            permission_hooks=self._permission_hooks,
+            project_root=self.project_root_path,
         )
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:])
