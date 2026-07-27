@@ -9,6 +9,7 @@ import warnings
 
 from acp import schema as acp_schema
 from acp.client.connection import ClientSideConnection
+from acp.connection import StreamDirection, StreamEvent
 from acp.transports import spawn_stdio_transport
 from rich.console import Console
 from rich.prompt import Confirm
@@ -37,17 +38,29 @@ PROTOCOL_VERSION = 1
 _console = Console(highlight=False)
 
 
-def _debug_log(verbose: bool, label: str, resp: Any) -> None:
-    if not verbose:
-        return
+def _verbose_stream_observer(event: StreamEvent) -> None:
+    """Log every JSON-RPC message sent or received when --verbose is active."""
     import json
 
+    msg = event.message
+    direction = "\u2192" if event.direction == StreamDirection.OUTGOING else "\u2190"
+    method = msg.get("method", "")
+    has_id = "id" in msg
+
+    if method:
+        label = f"{direction} {method}"
+    elif has_id:
+        label = f"{direction} response (id={msg['id']})"
+    else:
+        label = f"{direction} message"
+
     _console.print(f"\n[dim]--- {label} ---[/dim]")
-    try:
-        _console.print(json.dumps(resp.model_dump(mode="json"), indent=2))
-    except Exception:
-        _console.print(repr(resp))
-    _console.print("[dim]---[/dim]\n")
+    body = msg.get("result") or msg.get("error") or msg.get("params", {})
+    rendered = (
+        json.dumps(body, indent=2) if isinstance(body, (dict, list)) else repr(body)
+    )
+    _console.print(rendered)
+    _console.print("[dim]---[/dim]")
 
 
 class AgentClient:
@@ -438,12 +451,14 @@ class ACPAgent:
 
         self._conn = ClientSideConnection(client, writer, reader)
 
+        if self._verbose:
+            self._conn._conn.add_observer(_verbose_stream_observer)
+
         cwd = str(self.project_root_path.absolute())
         init_resp = await self._conn.initialize(
             protocol_version=PROTOCOL_VERSION,
             client_capabilities=capabilities,
         )
-        _debug_log(self._verbose, "initialize", init_resp)
 
         if target is None and load_existing:
             saved_session_id = get_saved_session(
@@ -492,9 +507,6 @@ class ACPAgent:
             session_resp = await self._conn.new_session(cwd=cwd)
             self._session_id = session_resp.session_id if session_resp else None
 
-        _debug_log(
-            self._verbose, "load_session" if target else "new_session", session_resp
-        )
         if not self._silent and session_resp:
             display_initial_session_info(session_resp)
 
@@ -635,7 +647,6 @@ class ACPAgent:
             self._session_id,
             blocks,
         )
-        _debug_log(self._verbose, "prompt", resp)
         stop_reason = str(resp.stop_reason)
         format_stop_reason(stop_reason)
         if self._transcript_recorder:
