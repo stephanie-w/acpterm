@@ -16,6 +16,7 @@ from rich.prompt import Confirm
 from .config import resolve_agent_command
 from .hooks import HookDefinition
 from .output import (
+    _state,
     display_initial_session_info,
     format_session_update,
     format_stop_reason,
@@ -539,6 +540,9 @@ class ACPAgent:
             else:
                 try:
                     await self.set_model(model_to_set)
+                    if not self._silent:
+                        _console.print(f"[dim]\\[model][/dim] {model_to_set}")
+                        _state._model_displayed = True
                 except Exception as e:
                     # Do not fail start if setting the model fails (e.g. unsupported option/method)
                     if not self._silent:
@@ -578,6 +582,9 @@ class ACPAgent:
             else:
                 try:
                     await self.set_mode(mode_to_set)
+                    if not self._silent:
+                        _console.print(f"[dim]\\[mode][/dim] {mode_to_set}")
+                        _state._mode_displayed = True
                 except Exception as e:
                     # Do not fail start if setting the mode fails (e.g. unsupported option/method)
                     if not self._silent:
@@ -653,7 +660,9 @@ class ACPAgent:
                 value=model_id,
             )
         except Exception:
-            # Fallback: session/set_model (newer protocol, not yet in agp-client-protocol 0.11.0)
+            # agent-client-protocol v0.11.0 lacks set_session_model().
+            # Fallback: raw session/set_model request (supported by opencode v1.2.24+).
+            # TODO: replace with self._conn.set_session_model() when the SDK ships it.
             await self._conn._conn.send_request(
                 "session/set_model",
                 {"sessionId": self._session_id, "modelId": model_id},
