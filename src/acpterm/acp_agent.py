@@ -684,6 +684,12 @@ class ACPAgent:
                 await self._conn.close_session(session_id=self._session_id)
 
     async def stop(self) -> None:
+        # Terminate the subprocess first so the receive loop exits
+        # cleanly before we close the connection and its message queue.
+        if self._process is not None:
+            with contextlib.suppress(Exception):
+                self._process.terminate()
+                await asyncio.wait_for(self._process.wait(), timeout=5.0)
         if self._conn:
             with contextlib.suppress(Exception):
                 await self._conn.close()
