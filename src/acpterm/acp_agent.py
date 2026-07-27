@@ -10,6 +10,7 @@ import warnings
 from acp import schema as acp_schema
 from acp.client.connection import ClientSideConnection
 from acp.connection import StreamDirection, StreamEvent
+from acp.exceptions import RequestError
 from acp.transports import spawn_stdio_transport
 from rich.console import Console
 from rich.prompt import Confirm
@@ -291,7 +292,7 @@ class AgentClient:
         if self._read_only:
             raise RuntimeError("File modifications are disabled in read-only mode")
         if not self._silent:
-            file_path = Path(path)
+            file_path = self._project_root / path
             file_path.write_text(content)
         if self._recorder:
             self._recorder.add_file_operation("write", path)
@@ -307,7 +308,7 @@ class AgentClient:
     ) -> acp_schema.ReadTextFileResponse:
         if self._silent:
             return acp_schema.ReadTextFileResponse(content="")
-        file_path = Path(path)
+        file_path = self._project_root / path
         text = file_path.read_text()
         lines = text.splitlines()
         if line is not None:
@@ -378,11 +379,14 @@ class AgentClient:
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         from .auth import resolve_auth_token
 
-        return await resolve_auth_token(
+        result = await resolve_auth_token(
             agent_name=self._agent_binary,
             method=method,
             params=params,
         )
+        if result:
+            return result
+        raise RequestError.method_not_found(method)
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         pass
@@ -471,6 +475,11 @@ class ACPAgent:
         init_resp = await self._conn.initialize(
             protocol_version=PROTOCOL_VERSION,
             client_capabilities=capabilities,
+            client_info=acp_schema.Implementation(
+                name="acpterm",
+                title="ACP Terminal Client",
+                version="0.1.0",
+            ),
         )
 
         if target is None and load_existing:
@@ -517,7 +526,7 @@ class ACPAgent:
                 session_resp = None
 
         if session_resp is None:
-            session_resp = await self._conn.new_session(cwd=cwd)
+            session_resp = await self._conn.new_session(cwd=cwd, mcp_servers=[])
             self._session_id = session_resp.session_id if session_resp else None
 
         if not self._silent and session_resp:

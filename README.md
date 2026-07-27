@@ -256,4 +256,8 @@ directory, and session name. This lets you resume sessions across CLI invocation
 
 *   ~~**Background Execution (`--no-wait`)**~~: Planned to allow enqueuing prompts without waiting for the response. Rejected because unattended background execution requires blind auto-approval of all agent actions (such as file modifications and shell commands), which presents significant safety risks, alongside process management complexity.
 
+## Known Limitations
+
+*   **Kiro file reading**: Kiro Engine v3 resolves `kiroFsReadFile: false` for unrecognized ACP clients. File reads are handled internally by kiro's Node adapter, but the `read_files` tool call status reports as blocked to the LLM, causing the agent to believe it cannot read files. Known working clients (e.g. `kiro-acp-telegram-bot`) suggest recognized client names may resolve this — the exact mechanism hasn't been identified.
+
 [acp]: https://agentclientprotocol.com

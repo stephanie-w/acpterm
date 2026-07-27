@@ -196,3 +196,7 @@ Vendor-specific auth extraction (like reading Kiro's SQLite DB and log files) be
 - [x] Markdown rendering via `rich`
 - [x] Context usage and cost display at end of run
 - [x] `-v/--verbose` on `models list` (dumps `new_session` JSON)
+
+### Kiro Agent File Reading
+
+Kiro Engine v3 resolves `kiroFsReadFile: false` for unrecognized ACP clients (both `acpterm` and `python-acp-host` clientInfo names resulted in this). Its internal `read_files` action is routed as an ACP tool call notification, but without `kiroFsReadFile` support, the LLM sees it as blocked. Kiro's Node filesystem adapter (`read=Node`) still reads files internally, but the agent model doesn't recognize the content because the tool status reports failure. A known working client (`kiro-acp-telegram-bot`) suggests kiro's recognized names get `true` — the exact mechanism is unclear (name, capabilities, or session-level config).
