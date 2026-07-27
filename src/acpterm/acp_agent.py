@@ -350,7 +350,13 @@ class AgentClient:
         pass
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        return {}
+        from .auth import resolve_auth_token
+
+        return await resolve_auth_token(
+            agent_name=self._agent_binary,
+            method=method,
+            params=params,
+        )
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         pass
