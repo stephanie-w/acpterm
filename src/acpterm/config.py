@@ -22,6 +22,16 @@ class Config(BaseModel):
     default_modes: dict[str, str] = Field(default_factory=dict)
     max_prompt_chars: int = Field(default=100000)
     hooks: list[HookDefinition] = Field(default_factory=list)
+    token_commands: dict[str, str] = Field(default_factory=dict)
+    profile_arns: dict[str, str] = Field(default_factory=dict)
+
+    def get_token_command(self, agent_name: str) -> str | None:
+        """Get configured auth token command for the agent."""
+        return self.token_commands.get(agent_name)
+
+    def get_profile_arn(self, agent_name: str) -> str | None:
+        """Get configured profile ARN for the agent."""
+        return self.profile_arns.get(agent_name)
 
     def get_agent_command(self, agent_name: str) -> list[str]:
         """Validate and resolve the full spawn command for an agent.
