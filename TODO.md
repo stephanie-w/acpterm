@@ -143,6 +143,32 @@ The `acp` Python library (`acp-sdk`) does not reference v2 yet — no v2 schema 
 - [ ] v2 plan updates — handle `plan_update` with `planId` and `type` discriminator
 - [ ] Provide MCP server for Client-side file access (replacement for v1 `fs/*` methods)
 
+## Agent Authentication Architecture (Pluggable Auth Providers)
+
+Currently, extension-based authentication requests (like `_kiro/auth/getAccessToken`) are resolved dynamically via:
+1. Environment variables (`ACPTERM_<AGENT>_TOKEN` or `ACPTERM_AUTH_TOKEN`).
+2. Configured token commands in `~/.acpterm/config.json` (`"token_commands": { "<agent>": "<command>" }`).
+
+### Option 1 Roadmap: Pluggable Auth Provider Registry (`src/acpterm/auth/`)
+
+For complex agents requiring specialized token extraction, expiration checks, or token refresh logic (such as reading local SQLite/LevelDB auth stores), implement a strategy pattern:
+
+```
+src/acpterm/
+├── acp_agent.py          # Pure ACP Client Protocol
+└── auth/
+    ├── base.py           # AuthProvider interface & registry
+    ├── env.py            # Environment variable fallback provider
+    ├── command.py        # Config token_command provider
+    └── kiro.py           # Kiro CLI SQLite token extractor (reads ~/.kiro/auth_kv.db, checks expires_at)
+```
+
+#### Implementation Steps for Option 1:
+- [ ] Create `AuthProvider` protocol in `src/acpterm/auth/base.py` with `get_access_token(agent_name: str, params: dict[str, Any]) -> dict[str, Any] | None`.
+- [ ] Create `AuthProviderRegistry` to auto-discover and register built-in and custom providers.
+- [ ] Move vendor-specific database readers (e.g., Kiro SQLite OIDC token parser) into `src/acpterm/auth/kiro.py`.
+- [ ] Dispatch extension auth callbacks in `AgentClient.ext_method` through `AuthProviderRegistry.get_token(...)`.
+
 ## Issues & Investigation
 
 ### Model Discovery
