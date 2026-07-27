@@ -54,6 +54,17 @@ def _verbose_stream_observer(event: StreamEvent) -> None:
     else:
         label = f"{direction} message"
 
+    # Streaming notifications: compact single-line summary, no body dump
+    is_notification = method and not has_id
+    if is_notification and method == "session/update":
+        params = msg.get("params", {})
+        update = params.get("update", params)
+        update_type = (
+            update.get("sessionUpdate", "?") if isinstance(update, dict) else "?"
+        )
+        _console.print(f"[dim]  {direction} {update_type}[/dim]")
+        return
+
     _console.print(f"\n[dim]--- {label} ---[/dim]")
     body = msg.get("result") or msg.get("error") or msg.get("params", {})
     rendered = (
