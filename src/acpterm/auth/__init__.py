@@ -7,13 +7,11 @@ from typing import Any
 from .base import AuthProvider
 from .command import CommandAuthProvider
 from .env import EnvAuthProvider
-from .kiro import KiroAuthProvider
 
 
 _PROVIDERS: list[AuthProvider] = [
     EnvAuthProvider(),
     CommandAuthProvider(),
-    KiroAuthProvider(),
 ]
 
 

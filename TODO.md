@@ -145,29 +145,25 @@ The `acp` Python library (`acp-sdk`) does not reference v2 yet — no v2 schema 
 
 ## Agent Authentication Architecture (Pluggable Auth Providers)
 
-Currently, extension-based authentication requests (like `_kiro/auth/getAccessToken`) are resolved dynamically via:
-1. Environment variables (`ACPTERM_<AGENT>_TOKEN` or `ACPTERM_AUTH_TOKEN`).
-2. Configured token commands in `~/.acpterm/config.json` (`"token_commands": { "<agent>": "<command>" }`).
-
-### Option 1 Roadmap: Pluggable Auth Provider Registry (`src/acpterm/auth/`)
-
-For complex agents requiring specialized token extraction, expiration checks, or token refresh logic (such as reading local SQLite/LevelDB auth stores), implement a strategy pattern:
+Extension-based authentication requests (like `_kiro/auth/getAccessToken`) are resolved via:
+1. `EnvAuthProvider` — reads `ACPTERM_<AGENT>_TOKEN`, `ACPTERM_AUTH_TOKEN`, or `AWS_*` environment variables.
+2. `CommandAuthProvider` — executes `token_commands` from `~/.acpterm/config.json`, captures stdout, parses JSON.
 
 ```
-src/acpterm/
-├── acp_agent.py          # Pure ACP Client Protocol
-└── auth/
-    ├── base.py           # AuthProvider interface & registry
-    ├── env.py            # Environment variable fallback provider
-    ├── command.py        # Config token_command provider
-    └── kiro.py           # Kiro CLI SQLite token extractor (reads ~/.kiro/auth_kv.db, checks expires_at)
+src/acpterm/auth/
+├── base.py              # AuthProvider abstract class
+├── env.py               # Environment variable provider
+├── command.py           # Config token_command provider
+
+scripts/
+└── kiro-auth.py         # Standalone Kiro token extractor (reads ~/.kiro auth DB,
+                            scans logs for profileArn, outputs JSON to stdout).
+                            Used via: "token_commands": {"kiro": "python3 scripts/kiro-auth.py"}
 ```
 
-#### Implementation Steps for Option 1:
-- [ ] Create `AuthProvider` protocol in `src/acpterm/auth/base.py` with `get_access_token(agent_name: str, params: dict[str, Any]) -> dict[str, Any] | None`.
-- [ ] Create `AuthProviderRegistry` to auto-discover and register built-in and custom providers.
-- [ ] Move vendor-specific database readers (e.g., Kiro SQLite OIDC token parser) into `src/acpterm/auth/kiro.py`.
-- [ ] Dispatch extension auth callbacks in `AgentClient.ext_method` through `AuthProviderRegistry.get_token(...)`.
+### Design Decision: Utility Scripts over Library Providers
+
+Vendor-specific auth extraction (like reading Kiro's SQLite DB and log files) belongs in standalone scripts invoked via `CommandAuthProvider`, not in the core library. This keeps `acpterm` free of agent-specific DB/log dependencies while maintaining the same auth interface.
 
 ## Issues & Investigation
 
