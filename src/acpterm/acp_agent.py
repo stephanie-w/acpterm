@@ -62,8 +62,10 @@ def _verbose_stream_observer(event: StreamEvent) -> None:
         update_type = (
             update.get("sessionUpdate", "?") if isinstance(update, dict) else "?"
         )
-        _console.print(f"[dim]  {direction} {update_type}[/dim]")
-        return
+        # Only collapse streaming text chunks -- tool calls, usage, etc. still dump full body
+        if update_type in ("agent_message_chunk", "agent_thought_chunk"):
+            _console.print(f"[dim]  {direction} {update_type}[/dim]")
+            return
 
     _console.print(f"\n[dim]--- {label} ---[/dim]")
     body = msg.get("result") or msg.get("error") or msg.get("params", {})
