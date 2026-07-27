@@ -109,6 +109,8 @@ reading stale state from the previous run.
 
 ## Model & Mode Customization
 
+> **Note:** `-m`/`--model` works via either `session/set_config_option` (standard) or `session/set_model` (newer protocol). Support varies by agent — opencode v1.2.24 supports `session/set_model` but not the older method. If an agent supports neither, the flag is silently ignored.
+
 You can customize the LLM model and agent operating mode in two ways:
 
 1. **Temporary Override**: Pass the global `-m` / `--model` or `--mode` options to override settings for the current command:

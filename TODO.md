@@ -178,6 +178,7 @@ src/acpterm/
 - **Reactive display attempt**: Tried `config_option_update` / `current_mode_update` notifications — agent doesn't emit these at session start. Reverted to cache approach.
 
 ### Protocol Compatibility
+- **Model setting (`session/set_config_option` vs `session/set_model`)**: The ACP protocol evolved from models-as-config-options (`session/set_config_option` with `config_id="model"`) to a dedicated `session/set_model` method (`sessionId` + `modelId`). The `acp` Python library v0.11.0 (schema v1.16.0) only exposes the old method. `acpterm` tries both: first `session/set_config_option`, then falls back to raw `session/set_model` via `send_request`. opencode v1.2.24 supports `session/set_model` but not `session/set_config_option`. When upgrading `agent-client-protocol`, prefer the library's native `set_session_model()` once available.
 - **`session/close`**: Optional method. Wrapped in try/except. Session cleanup relies on process termination when close isn't supported.
 - **`_SilentClient`** (`cli.py`): Duplicates `_AgentClient` logic. Should be shared or extracted into a common base.
 

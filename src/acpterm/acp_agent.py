@@ -646,11 +646,18 @@ class ACPAgent:
     async def set_model(self, model_id: str) -> None:
         if self._conn is None or self._session_id is None:
             raise RuntimeError("Agent not started")
-        await self._conn.set_config_option(
-            config_id="model",
-            session_id=self._session_id,
-            value=model_id,
-        )
+        try:
+            await self._conn.set_config_option(
+                config_id="model",
+                session_id=self._session_id,
+                value=model_id,
+            )
+        except Exception:
+            # Fallback: session/set_model (newer protocol, not yet in agp-client-protocol 0.11.0)
+            await self._conn._conn.send_request(
+                "session/set_model",
+                {"sessionId": self._session_id, "modelId": model_id},
+            )
 
     @property
     def session_id(self) -> str | None:
