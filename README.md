@@ -268,6 +268,8 @@ Define permanent default hooks in `~/.acpterm/config.json`:
 2. **[CI/CD Automated PR & Security Reviews](docs/use-cases/ci-cd-reviews.md)**: Run headless, read-only (`--read-only`) agent reviews inside GitHub Actions or GitLab CI pipelines.
 3. **[Self-Healing Refactoring & Test Loops](docs/use-cases/self-healing-loops.md)**: Construct automated test-driven prompt chaining loops with `--chain-prompt` and post-turn verification scripts.
 4. **[Multi-Agent Benchmarking & Comparison](docs/use-cases/agent-benchmarking.md)**: Benchmark and compare execution duration, token consumption, and tool calls across different ACP agents (`opencode`, `kiro`, `agy`).
+5. **[Command Whitelisting & Permission Policies](docs/use-cases/command-whitelisting.md)**: Define auto-approved command whitelists and dynamic permission policies using `-p / --on-permission` hooks.
+
 
 
 
