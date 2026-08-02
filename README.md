@@ -260,6 +260,17 @@ Define permanent default hooks in `~/.acpterm/config.json`:
 }
 ```
 
+## Use Cases & Advanced Workflows
+
+`acpterm` supports multiple production use cases and advanced workflows:
+
+1. **[LLM-as-a-Judge & Agent Usage Auditing](docs/use-cases/llm-as-a-judge.md)**: Evaluate code quality, token efficiency, and MCP skill adoption using 2-step transcript judging or automated post-turn auditing scripts (`-k / --on-turn-end`).
+2. **[CI/CD Automated PR & Security Reviews](docs/use-cases/ci-cd-reviews.md)**: Run headless, read-only (`--read-only`) agent reviews inside GitHub Actions or GitLab CI pipelines.
+3. **[Self-Healing Refactoring & Test Loops](docs/use-cases/self-healing-loops.md)**: Construct automated test-driven prompt chaining loops with `--chain-prompt` and post-turn verification scripts.
+4. **[Multi-Agent Benchmarking & Comparison](docs/use-cases/agent-benchmarking.md)**: Benchmark and compare execution duration, token consumption, and tool calls across different ACP agents (`opencode`, `kiro`, `agy`).
+
+
+
 ## Session Storage
 
 Sessions are persisted in `~/.acpterm/sessions.json`, keyed by agent name, working
