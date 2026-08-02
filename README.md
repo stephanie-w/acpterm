@@ -5,9 +5,22 @@ and displays its thinking, tool calls, and responses in the terminal.
 
 ## Install
 
+### Local Development
+
 ```bash
 uv sync
 ```
+
+### Global Installation
+
+To install `acpterm` globally as a CLI tool available system-wide in your terminal, run:
+
+```bash
+uv tool install .
+```
+
+*(Alternatively, if using `pipx`: `pipx install .`)*
+
 
 ## Quick Start
 
