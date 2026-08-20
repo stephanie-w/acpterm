@@ -10,6 +10,11 @@ class AuthProvider(ABC):
     """Abstract base class for agent extension authentication providers."""
 
     @abstractmethod
+    def has_config(self, agent_name: str) -> bool:
+        """Check if this provider has authentication configured for the agent."""
+        ...
+
+    @abstractmethod
     async def get_token(
         self, agent_name: str, params: dict[str, Any], verbose: bool = False
     ) -> dict[str, Any] | None:

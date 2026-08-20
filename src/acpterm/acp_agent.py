@@ -430,6 +430,12 @@ class ACPAgent:
         model_override: str | None = None,
         mode_override: str | None = None,
     ) -> None:
+        from .auth import has_auth_configured
+
+        auth_caps = None
+        if has_auth_configured(self.agent_binary):
+            auth_caps = acp_schema.AuthCapabilities(terminal=False)
+
         capabilities = acp_schema.ClientCapabilities(
             fs=acp_schema.FileSystemCapabilities(
                 read_text_file=True,
@@ -445,7 +451,7 @@ class ACPAgent:
             ),
             terminal=True,
             plan=acp_schema.PlanCapabilities(),
-            auth=acp_schema.AuthCapabilities(terminal=False),
+            auth=auth_caps,
             field_meta={},
         )
 

@@ -11,6 +11,12 @@ from .base import AuthProvider
 class EnvAuthProvider(AuthProvider):
     """AuthProvider that resolves tokens from generic ACPTERM environment variables."""
 
+    def has_config(self, agent_name: str) -> bool:
+        agent_env_key = f"ACPTERM_{agent_name.upper().replace('-', '_')}_TOKEN"
+        return bool(
+            os.environ.get(agent_env_key) or os.environ.get("ACPTERM_AUTH_TOKEN")
+        )
+
     async def get_token(
         self, agent_name: str, params: dict[str, Any], verbose: bool = False
     ) -> dict[str, Any] | None:
