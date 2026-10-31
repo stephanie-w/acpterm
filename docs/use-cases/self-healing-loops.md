@@ -36,18 +36,23 @@ import os
 import subprocess
 import sys
 
+
 def verify_codebase():
     print("🔍 Running codebase verification...")
 
     # Run ruff format & linter
-    lint_res = subprocess.run(["uv", "run", "ruff", "check", "."], capture_output=True, text=True)
+    lint_res = subprocess.run(
+        ["uv", "run", "ruff", "check", "."], capture_output=True, text=True
+    )
     if lint_res.returncode != 0:
         print("[verify:fail] Linting errors found!")
         print(lint_res.stdout)
         sys.exit(1)
 
     # Run pytest
-    test_res = subprocess.run(["uv", "run", "pytest", "tests/"], capture_output=True, text=True)
+    test_res = subprocess.run(
+        ["uv", "run", "pytest", "tests/"], capture_output=True, text=True
+    )
     if test_res.returncode != 0:
         print("[verify:fail] Test suite failed!")
         print(test_res.stdout)
@@ -55,6 +60,7 @@ def verify_codebase():
 
     print("✅ All verifications passed!")
     sys.exit(0)
+
 
 if __name__ == "__main__":
     verify_codebase()

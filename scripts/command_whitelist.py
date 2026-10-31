@@ -15,6 +15,7 @@ Exit codes returned to acpterm:
 import os
 import sys
 
+
 # Whitelisted command prefixes/patterns for 'execute' operations
 WHITELISTED_COMMANDS = [
     "git status",

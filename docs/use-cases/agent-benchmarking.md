@@ -46,19 +46,21 @@ from pathlib import Path
 import re
 import sys
 
+
 def parse_benchmark(file_path: Path) -> dict:
     content = file_path.read_text(encoding="utf-8")
-    
+
     duration_match = re.search(r"Duration\*\*:\s*([\d.]+)\s*seconds", content)
     context_match = re.search(r"Context Usage\*\*:\s*([\d,]+)", content)
     tools_match = len(re.findall(r"### `([^`]+)`", content))
-    
+
     return {
         "agent": file_path.stem.replace("_lru", ""),
         "duration": float(duration_match.group(1)) if duration_match else 0.0,
         "tokens": context_match.group(1) if context_match else "N/A",
         "tool_calls": tools_match,
     }
+
 
 def compare_all(benchmark_dir: Path):
     files = list(benchmark_dir.glob("*.md"))
@@ -67,16 +69,21 @@ def compare_all(benchmark_dir: Path):
         return
 
     results = [parse_benchmark(f) for f in files]
-    
+
     print("=" * 60)
     print("🏆 ACP Agent Benchmark Matrix")
     print("=" * 60)
-    print(f"{'Agent':<15} | {'Duration (s)':<15} | {'Context Tokens':<15} | {'Tool Calls':<10}")
+    print(
+        f"{'Agent':<15} | {'Duration (s)':<15} | {'Context Tokens':<15} | {'Tool Calls':<10}"
+    )
     print("-" * 60)
-    
+
     for r in sorted(results, key=lambda x: x["duration"]):
-        print(f"{r['agent']:<15} | {r['duration']:<15.2f} | {r['tokens']:<15} | {r['tool_calls']:<10}")
+        print(
+            f"{r['agent']:<15} | {r['duration']:<15.2f} | {r['tokens']:<15} | {r['tool_calls']:<10}"
+        )
     print("=" * 60)
+
 
 if __name__ == "__main__":
     benchmark_dir = Path("benchmarks") if Path("benchmarks").exists() else Path(".")

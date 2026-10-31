@@ -64,6 +64,7 @@ import os
 import re
 import sys
 
+
 def audit():
     transcript_str = os.environ.get("ACPTERM_TRANSCRIPT", "")
     if not transcript_str or not Path(transcript_str).exists():
@@ -79,6 +80,7 @@ def audit():
     counts = {t: len(re.findall(rf"\b{t}\b", content)) for t in tools}
 
     print(f"📊 Audit for [{agent}] ({duration}s): {counts}")
+
 
 if __name__ == "__main__":
     audit()

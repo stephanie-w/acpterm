@@ -44,6 +44,7 @@ WHITELISTED_COMMANDS = [
     "npm test",
 ]
 
+
 def evaluate_permission() -> int:
     title = os.environ.get("ACPTERM_PERMISSION_TITLE", "")
     kind = os.environ.get("ACPTERM_PERMISSION_KIND", "")
@@ -60,6 +61,7 @@ def evaluate_permission() -> int:
 
     # 3. Fallback for non-whitelisted actions to interactive prompt
     return 2  # Fallback to interactive terminal prompt
+
 
 if __name__ == "__main__":
     sys.exit(evaluate_permission())

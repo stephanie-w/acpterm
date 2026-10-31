@@ -7,8 +7,8 @@ Reads environment variables populated by acpterm:
 - ACPTERM_DURATION_SECONDS: Execution duration.
 """
 
-from pathlib import Path
 import os
+from pathlib import Path
 import re
 import sys
 
@@ -49,19 +49,23 @@ def audit_transcript() -> None:
         print(f"{icon} Tool '{tool}': {count} call(s)")
 
     print("-" * 50)
-    
+
     # Check for potential anti-patterns
     issues = []
-    
+
     # Check 1: No MCP tools used at all
     if total_calls == 0:
         issues.append("WARNING: No MCP tools were invoked during this turn!")
 
     # Check 2: Unscoped search_symbols (missing codebase_id parameter check)
-    search_blocks = re.findall(r"code-indexer_search_symbols.*?```json\n(.*?)\n```", content, re.DOTALL)
+    search_blocks = re.findall(
+        r"code-indexer_search_symbols.*?```json\n(.*?)\n```", content, re.DOTALL
+    )
     for block in search_blocks:
         if "codebase_id" not in block:
-            issues.append("WARNING: search_symbols was invoked without codebase_id scoping.")
+            issues.append(
+                "WARNING: search_symbols was invoked without codebase_id scoping."
+            )
 
     if issues:
         print("⚠️ Anti-Patterns & Warnings Detected:")
