@@ -14,6 +14,10 @@ from .base import AuthProvider
 class CommandAuthProvider(AuthProvider):
     """AuthProvider that executes custom token_commands from ~/.acpterm/config.json."""
 
+    def has_config(self, agent_name: str) -> bool:
+        config = Config.load()
+        return bool(config.get_token_command(agent_name))
+
     async def get_token(
         self, agent_name: str, params: dict[str, Any], verbose: bool = False
     ) -> dict[str, Any] | None:

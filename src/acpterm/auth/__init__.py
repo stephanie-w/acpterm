@@ -15,6 +15,11 @@ _PROVIDERS: list[AuthProvider] = [
 ]
 
 
+def has_auth_configured(agent_name: str) -> bool:
+    """Check if any registered AuthProvider has configuration for this agent."""
+    return any(provider.has_config(agent_name) for provider in _PROVIDERS)
+
+
 async def resolve_auth_token(
     agent_name: str,
     method: str,

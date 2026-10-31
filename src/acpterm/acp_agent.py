@@ -293,6 +293,7 @@ class AgentClient:
             raise RuntimeError("File modifications are disabled in read-only mode")
         if not self._silent:
             file_path = self._project_root / path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content)
         if self._recorder:
             self._recorder.add_file_operation("write", path)
@@ -430,6 +431,12 @@ class ACPAgent:
         model_override: str | None = None,
         mode_override: str | None = None,
     ) -> None:
+        from .auth import has_auth_configured
+
+        auth_caps = None
+        if has_auth_configured(self.agent_binary):
+            auth_caps = acp_schema.AuthCapabilities(terminal=False)
+
         capabilities = acp_schema.ClientCapabilities(
             fs=acp_schema.FileSystemCapabilities(
                 read_text_file=True,
@@ -445,7 +452,7 @@ class ACPAgent:
             ),
             terminal=True,
             plan=acp_schema.PlanCapabilities(),
-            auth=acp_schema.AuthCapabilities(terminal=False),
+            auth=auth_caps,
             field_meta={},
         )
 
@@ -462,7 +469,10 @@ class ACPAgent:
 
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(
-            cmd[0], *cmd[1:], env=dict(os.environ)
+            cmd[0],
+            *cmd[1:],
+            env=dict(os.environ),
+            cwd=str(self.project_root_path.absolute()),
         )
         reader, writer, self._process = await self._transport_ctx.__aenter__()  # type: ignore[func-returns-value]
 
