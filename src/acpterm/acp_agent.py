@@ -293,6 +293,7 @@ class AgentClient:
             raise RuntimeError("File modifications are disabled in read-only mode")
         if not self._silent:
             file_path = self._project_root / path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content)
         if self._recorder:
             self._recorder.add_file_operation("write", path)
@@ -468,7 +469,10 @@ class ACPAgent:
 
         cmd = resolve_agent_command(self.agent_binary)
         self._transport_ctx = spawn_stdio_transport(
-            cmd[0], *cmd[1:], env=dict(os.environ)
+            cmd[0],
+            *cmd[1:],
+            env=dict(os.environ),
+            cwd=str(self.project_root_path.absolute()),
         )
         reader, writer, self._process = await self._transport_ctx.__aenter__()  # type: ignore[func-returns-value]
 
