@@ -36,6 +36,31 @@ def _run_async(coro: Any) -> None:
     asyncio.run(coro)
 
 
+def _pick_agent(agent: str | None, default_agent: str | None) -> str | None:
+    """Return agent or configured default; None if unspecified."""
+    return agent or default_agent
+
+
+def _resolve_agent(agent: str | None) -> str | None:
+    """Resolve the effective agent name from flag or config default."""
+    from .config import Config
+
+    return _pick_agent(agent, Config.load().default_agent)
+
+
+def _require_agent(ctx: typer.Context) -> str:
+    """Return the resolved agent or exit when none was specified."""
+    agent_binary = ctx.obj.get("agent")
+    if not agent_binary:
+        typer.echo(
+            "Error: no agent specified. Pass `-a/--agent` or set `default_agent` "
+            "in ~/.acpterm/config.json.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    return agent_binary
+
+
 def complete_agent(incomplete: str) -> list[str]:
     from .config import Config
 
@@ -55,7 +80,9 @@ def complete_session(incomplete: str) -> list[str]:
 
 
 def complete_model(ctx: typer.Context, incomplete: str) -> list[str]:
-    agent_binary = ctx.params.get("agent") or "opencode"
+    agent_binary = _resolve_agent(ctx.params.get("agent"))
+    if not agent_binary:
+        return []
     co_opts = agent_cache.get_config_options(agent_binary) or []
     models = []
     for opt in co_opts:
@@ -71,7 +98,9 @@ def complete_model(ctx: typer.Context, incomplete: str) -> list[str]:
 
 
 def complete_mode(ctx: typer.Context, incomplete: str) -> list[str]:
-    agent_binary = ctx.params.get("agent") or "opencode"
+    agent_binary = _resolve_agent(ctx.params.get("agent"))
+    if not agent_binary:
+        return []
     cached_modes = agent_cache.get_modes(agent_binary)
     modes = []
     if cached_modes and cached_modes.get("available_modes"):
@@ -83,14 +112,14 @@ def complete_mode(ctx: typer.Context, incomplete: str) -> list[str]:
 def callback(
     ctx: typer.Context,
     agent: Annotated[
-        str,
+        str | None,
         typer.Option(
             "-a",
             "--agent",
             help="ACP agent binary name",
             autocompletion=complete_agent,
         ),
-    ] = "opencode",
+    ] = None,
     session: Annotated[
         str | None,
         typer.Option(
@@ -136,9 +165,10 @@ def callback(
     ] = None,
 ) -> None:
     cwd = str(Path.cwd().absolute())
+    resolved_agent = _resolve_agent(agent)
     resolved_session = session
-    if resume:
-        latest = session_store.get_latest(agent, cwd)
+    if resume and resolved_agent:
+        latest = session_store.get_latest(resolved_agent, cwd)
         if latest:
             resolved_session = latest["name"]
             if verbose:
@@ -149,7 +179,7 @@ def callback(
             resolved_session = session or "default"
 
     ctx.ensure_object(dict)
-    ctx.obj["agent"] = agent
+    ctx.obj["agent"] = resolved_agent
     ctx.obj["session_name"] = resolved_session or "default"
     ctx.obj["auto_yes"] = auto_yes
     ctx.obj["verbose"] = verbose
@@ -361,7 +391,7 @@ def list_models(
     ctx: typer.Context,
 ) -> None:
     """List available models and show the currently selected one."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
 
     if not agent_cache.is_fresh(agent_binary):
         _run_async(
@@ -458,7 +488,7 @@ def set_model(
     model_id: Annotated[str, typer.Argument(help="Model ID to select")],
 ) -> None:
     """Set the active model for the current session."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
     session_name = ctx.obj["session_name"]
     cwd = str(Path.cwd().absolute())
     verbose = ctx.obj.get("verbose", False)
@@ -505,7 +535,7 @@ def list_modes(
     ctx: typer.Context,
 ) -> None:
     """List available modes and show the currently active one."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
 
     if not agent_cache.is_fresh(agent_binary):
         _run_async(
@@ -583,7 +613,7 @@ def set_mode(
     mode_id: Annotated[str, typer.Argument(help="Mode ID to activate")],
 ) -> None:
     """Set the active mode for the current session."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
     session_name = ctx.obj["session_name"]
     cwd = str(Path.cwd().absolute())
     verbose = ctx.obj.get("verbose", False)
@@ -630,7 +660,7 @@ def list_commands(
     ctx: typer.Context,
 ) -> None:
     """List available slash commands from the agent cache."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
 
     if not agent_cache.is_fresh(agent_binary):
         _run_async(
@@ -711,6 +741,7 @@ def init_config(
             "opencode": "opencode",
             "kiro": "kiro",
         },
+        default_agent="opencode",
         agent_models={
             "opencode": [
                 {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"},
@@ -743,7 +774,7 @@ def init_config(
 @sessions_app.command(name="list")
 def list_sessions(ctx: typer.Context) -> None:
     """List saved sessions for the current agent and working directory."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
     cwd = str(Path.cwd().absolute())
     sessions = session_store.list_sessions(agent_name=agent_binary, cwd=cwd)
 
@@ -773,7 +804,7 @@ def show_session(
     ] = None,
 ) -> None:
     """Show metadata for a saved session."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
     session_name = name or ctx.obj["session_name"]
     cwd = str(Path.cwd().absolute())
     entry = session_store.get_entry(agent_binary, cwd, session_name)
@@ -824,7 +855,7 @@ def close_session(
     ] = None,
 ) -> None:
     """Close a session (notifies the agent and removes local metadata)."""
-    agent_binary = ctx.obj["agent"]
+    agent_binary = _require_agent(ctx)
     session_name = name or ctx.obj["session_name"]
     cwd = str(Path.cwd().absolute())
     verbose = ctx.obj.get("verbose", False)
@@ -954,10 +985,11 @@ def prompt(
     ] = None,
 ) -> None:
     """Send a prompt to the agent (saves session for subsequent prompts)."""
+    agent_binary = _require_agent(ctx)
     prompt_text = _resolve_prompt_text(prompt, file)
     _run_async(
         _run_prompt(
-            agent_binary=ctx.obj["agent"],
+            agent_binary=agent_binary,
             prompt_text=prompt_text,
             session_name=ctx.obj["session_name"],
             auto_yes=ctx.obj["auto_yes"],
@@ -1034,10 +1066,11 @@ def exec(
     ] = None,
 ) -> None:
     """One-shot prompt (no session persistence)."""
+    agent_binary = _require_agent(ctx)
     prompt_text = _resolve_prompt_text(prompt, file)
     _run_async(
         _run_prompt(
-            agent_binary=ctx.obj["agent"],
+            agent_binary=agent_binary,
             prompt_text=prompt_text,
             auto_yes=ctx.obj["auto_yes"],
             persist=False,

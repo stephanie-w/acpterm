@@ -47,7 +47,7 @@ jobs:
           git diff origin/${{ github.base_ref }}...HEAD > pr_diff.patch
 
           # Run acpterm in read-only mode passing diff via stdin
-          cat pr_diff.patch | acpterm --read-only exec \
+          cat pr_diff.patch | acpterm -a opencode --read-only exec \
             "Review this git diff for bugs, performance bottlenecks, and security risks. Provide actionable feedback." \
             --export pr_review.md
 
@@ -72,7 +72,7 @@ jobs:
 To strictly enforce file reading or command execution boundaries in CI, use a permission policy script:
 
 ```bash
-acpterm --read-only exec "Analyze changes" -p "python3 scripts/ci_permission_policy.py"
+acpterm -a opencode --read-only exec "Analyze changes" -p "python3 scripts/ci_permission_policy.py"
 ```
 
 ### `scripts/ci_permission_policy.py`

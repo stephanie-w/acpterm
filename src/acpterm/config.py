@@ -17,6 +17,7 @@ class Config(BaseModel):
     """Configuration schema for acpterm."""
 
     agents: dict[str, str] = Field(default_factory=dict)
+    default_agent: str | None = None
     agent_models: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
     default_models: dict[str, str] = Field(default_factory=dict)
     default_modes: dict[str, str] = Field(default_factory=dict)
