@@ -36,6 +36,18 @@ def _run_async(coro: Any) -> None:
     asyncio.run(coro)
 
 
+def _pick_agent(agent: str | None, default_agent: str | None) -> str | None:
+    """Return agent or configured default; None if unspecified."""
+    return agent or default_agent
+
+
+def _resolve_agent(agent: str | None) -> str | None:
+    """Resolve the effective agent name from flag or config default."""
+    from .config import Config
+
+    return _pick_agent(agent, Config.load().default_agent)
+
+
 def complete_agent(incomplete: str) -> list[str]:
     from .config import Config
 
@@ -55,7 +67,9 @@ def complete_session(incomplete: str) -> list[str]:
 
 
 def complete_model(ctx: typer.Context, incomplete: str) -> list[str]:
-    agent_binary = ctx.params.get("agent") or "opencode"
+    agent_binary = _resolve_agent(ctx.params.get("agent"))
+    if not agent_binary:
+        return []
     co_opts = agent_cache.get_config_options(agent_binary) or []
     models = []
     for opt in co_opts:
@@ -71,7 +85,9 @@ def complete_model(ctx: typer.Context, incomplete: str) -> list[str]:
 
 
 def complete_mode(ctx: typer.Context, incomplete: str) -> list[str]:
-    agent_binary = ctx.params.get("agent") or "opencode"
+    agent_binary = _resolve_agent(ctx.params.get("agent"))
+    if not agent_binary:
+        return []
     cached_modes = agent_cache.get_modes(agent_binary)
     modes = []
     if cached_modes and cached_modes.get("available_modes"):
@@ -83,14 +99,14 @@ def complete_mode(ctx: typer.Context, incomplete: str) -> list[str]:
 def callback(
     ctx: typer.Context,
     agent: Annotated[
-        str,
+        str | None,
         typer.Option(
             "-a",
             "--agent",
             help="ACP agent binary name",
             autocompletion=complete_agent,
         ),
-    ] = "opencode",
+    ] = None,
     session: Annotated[
         str | None,
         typer.Option(
@@ -136,9 +152,17 @@ def callback(
     ] = None,
 ) -> None:
     cwd = str(Path.cwd().absolute())
+    resolved_agent = _resolve_agent(agent)
+    if not resolved_agent and ctx.invoked_subcommand != "config":
+        typer.echo(
+            "Error: no agent specified. Pass `-a/--agent` or set `default_agent` "
+            "in ~/.acpterm/config.json.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
     resolved_session = session
-    if resume:
-        latest = session_store.get_latest(agent, cwd)
+    if resume and resolved_agent:
+        latest = session_store.get_latest(resolved_agent, cwd)
         if latest:
             resolved_session = latest["name"]
             if verbose:
@@ -149,7 +173,7 @@ def callback(
             resolved_session = session or "default"
 
     ctx.ensure_object(dict)
-    ctx.obj["agent"] = agent
+    ctx.obj["agent"] = resolved_agent
     ctx.obj["session_name"] = resolved_session or "default"
     ctx.obj["auto_yes"] = auto_yes
     ctx.obj["verbose"] = verbose

@@ -196,6 +196,7 @@ Vendor-specific auth extraction (like reading Kiro's SQLite DB and log files) be
 - [x] Markdown rendering via `rich`
 - [x] Context usage and cost display at end of run
 - [x] `-v/--verbose` on `models list` (dumps `new_session` JSON)
+- [x] Config-driven default agent (`default_agent` in config.json; `-a` overrides; error if neither)
 
 ### Kiro Agent File Reading
 

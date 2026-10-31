@@ -72,8 +72,8 @@ acpterm -a opencode prompt "refactor the auth module"
 acpterm -a opencode prompt -s api-session "implement token pagination"
 acpterm -a opencode -r prompt "continue implementation"
 acpterm -a opencode prompt -y "do stuff"              # auto-approve permissions
-echo "explain this repo" | acpterm prompt             # pipe prompt from stdin
-acpterm prompt --file prompt.md                       # load prompt from file
+echo "explain this repo" | acpterm -a opencode prompt  # pipe prompt from stdin
+acpterm -a opencode prompt --file prompt.md             # load prompt from file
 ```
 
 #### `exec`
@@ -93,6 +93,20 @@ acpterm -a opencode prompt "fix the lint errors"
 acpterm -a kiro prompt "implement feature X"
 acpterm -a agy prompt "review this PR"
 ```
+
+## Default Agent
+
+`-a/--agent` selects the agent. When it's not passed, `acpterm` uses
+`default_agent` from `~/.acpterm/config.json`:
+
+```json
+{
+  "default_agent": "kiro"
+}
+```
+
+`-a/--agent` always overrides `default_agent`. If neither is set, `acpterm`
+exits with an error asking you to pass `-a/--agent` or set `default_agent`.
 
 ## Example Output
 
@@ -128,13 +142,13 @@ You can customize the LLM model and agent operating mode in two ways:
 
 1. **Temporary Override**: Pass the global `-m` / `--model` or `--mode` options to override settings for the current command:
    ```bash
-   acpterm -m gemini-2.5-flash --mode plan exec "explain this project"
+   acpterm -a opencode -m gemini-2.5-flash --mode plan exec "explain this project"
    ```
 
 2. **Persistent Default**: Set the default model or mode for an agent using the `models set` and `modes set` commands. This updates your configuration file so future sessions automatically run with them:
    ```bash
-   acpterm models set gemini-2.5-pro
-   acpterm modes set plan
+   acpterm -a opencode models set gemini-2.5-pro
+   acpterm -a opencode modes set plan
    ```
 
 Model and mode preferences are saved per-agent in `~/.acpterm/config.json` under the `default_models` and `default_modes` keys:
@@ -155,7 +169,7 @@ Model and mode preferences are saved per-agent in `~/.acpterm/config.json` under
 You can run agents in read-only mode by passing the `--read-only` flag globally:
 
 ```bash
-acpterm --read-only exec "analyze the entry point and list its dependencies"
+acpterm -a opencode --read-only exec "analyze the entry point and list its dependencies"
 ```
 
 In read-only mode:
