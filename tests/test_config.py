@@ -62,7 +62,7 @@ def test_resolve_agent_returns_none_without_flag_or_default(
     assert _resolve_agent(None) is None
 
 
-def test_callback_exits_2_when_no_agent(
+def test_prompt_exits_2_when_no_agent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("acpterm.config.CONFIG_FILE", tmp_path / "missing.json")
@@ -72,6 +72,26 @@ def test_callback_exits_2_when_no_agent(
 
     assert result.exit_code == 2
     assert "no agent specified" in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["prompt", "--help"],
+        ["exec", "--help"],
+        ["models", "list", "--help"],
+        ["sessions", "list", "--help"],
+    ],
+)
+def test_subcommand_help_exits_0_without_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str]
+) -> None:
+    monkeypatch.setattr("acpterm.config.CONFIG_FILE", tmp_path / "missing.json")
+    runner = CliRunner()
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0
 
 
 def test_callback_allows_config_subcommand_without_agent(
@@ -85,3 +105,18 @@ def test_callback_allows_config_subcommand_without_agent(
 
     assert show_result.exit_code == 0
     assert init_result.exit_code == 0
+
+
+def test_config_init_writes_default_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr("acpterm.config.CONFIG_FILE", config_file)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["config", "init"])
+
+    assert result.exit_code == 0
+    assert (
+        Config.model_validate_json(config_file.read_text()).default_agent == "opencode"
+    )
