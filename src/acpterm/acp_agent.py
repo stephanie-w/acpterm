@@ -38,6 +38,10 @@ if False:  # TYPE_CHECKING
 PROTOCOL_VERSION = 1
 _console = Console(highlight=False)
 
+# Permission kinds that are safe to auto-approve in read-only mode.
+# Only non-mutating filesystem reads qualify; writes, deletes, executes, etc. remain blocked.
+_READ_ONLY_SAFE_KINDS: frozenset[str] = frozenset({"read"})
+
 
 def _verbose_stream_observer(event: StreamEvent) -> None:
     """Log every JSON-RPC message sent or received when --verbose is active."""
@@ -220,6 +224,20 @@ class AgentClient:
 
         if not self._silent:
             _console.print(f"\n[yellow][perm][/yellow] {title} [dim]({kind_str})[/dim]")
+
+        # In read-only mode, auto-approve non-mutating reads without prompting.
+        if self._read_only and kind_str in _READ_ONLY_SAFE_KINDS:
+            if not self._silent:
+                _console.print("[dim]  Auto-approved (read-only safe)[/dim]")
+            option_id = options[0].option_id if options else "allow_always"
+            if self._recorder:
+                self._recorder.add_permission(title, kind_str, "approved")
+            return acp_schema.RequestPermissionResponse(
+                outcome=acp_schema.AllowedOutcome(
+                    outcome="selected",
+                    option_id=option_id,
+                )
+            )
 
         # Check for permission hooks if defined
         if self._permission_hooks:

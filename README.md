@@ -298,6 +298,6 @@ directory, and session name. This lets you resume sessions across CLI invocation
 
 ## Known Limitations
 
-*   **Kiro file reading**: Kiro Engine v3 resolves `kiroFsReadFile: false` for unrecognized ACP clients. File reads are handled internally by kiro's Node adapter, but the `read_files` tool call status reports as blocked to the LLM, causing the agent to believe it cannot read files. Known working clients (e.g. `kiro-acp-telegram-bot`) suggest recognized client names may resolve this — the exact mechanism hasn't been identified.
+*   **Kiro file reading**: Kiro Engine v3 blocks `read_file` and `grep_search` tool calls at the agent level, reporting them as `failed` to the LLM without ever issuing an ACP `request_permission` call. This means acpterm's permission layer cannot intercept or approve them. Root cause: the ACP SDK serializes `FileSystemCapabilities` with `exclude_defaults=True`, so `writeTextFile: false` is omitted from the `initialize` handshake. Kiro interprets the absent field as the client not supporting fs operations and disables all fs tools (including reads). The `--trust-tools` flag on `kiro-cli` only applies to `chat` mode, not `acp` mode, so there is no CLI workaround. Known working clients (e.g. `kiro-acp-telegram-bot`) suggest recognized client names may resolve this — the exact mechanism hasn't been identified. This issue does not affect other ACP-compliant agents (e.g. opencode).
 
 [acp]: https://agentclientprotocol.com
