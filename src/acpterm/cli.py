@@ -975,85 +975,21 @@ def prompt(
             help="Follow-up prompt to send automatically when turn completes",
         ),
     ] = None,
-    on_permission: Annotated[
+    ephemeral: Annotated[
+        bool,
+        typer.Option(
+            "--ephemeral",
+            "-E",
+            help="Run one-shot without persisting session state",
+        ),
+    ] = False,
+    session: Annotated[
         str | None,
         typer.Option(
-            "--on-permission",
-            "-p",
-            help="Policy hook command to evaluate permission requests (exit 0=allow, 1=deny, 2=fallback)",
-        ),
-    ] = None,
-) -> None:
-    """Send a prompt to the agent (saves session for subsequent prompts)."""
-    agent_binary = _require_agent(ctx)
-    prompt_text = _resolve_prompt_text(prompt, file)
-    _run_async(
-        _run_prompt(
-            agent_binary=agent_binary,
-            prompt_text=prompt_text,
-            session_name=ctx.obj["session_name"],
-            auto_yes=ctx.obj["auto_yes"],
-            persist=True,
-            verbose=ctx.obj.get("verbose", False),
-            read_only=ctx.obj.get("read_only", False),
-            resources=resource,
-            export=export,
-            model_override=ctx.obj.get("model"),
-            mode_override=ctx.obj.get("mode"),
-            on_turn_end=on_turn_end,
-            chain_prompt=chain_prompt,
-            on_permission=on_permission,
-        )
-    )
-
-
-@app.command()
-def exec(
-    ctx: typer.Context,
-    prompt: Annotated[
-        list[str] | None, typer.Argument(help="Prompt text (one-shot)")
-    ] = None,
-    file: Annotated[
-        Path | None,
-        typer.Option("--file", "-f", help="Read prompt from file (use '-' for stdin)"),
-    ] = None,
-    resource: Annotated[
-        list[Path] | None,
-        typer.Option(
-            "--resource",
-            "-r",
-            help="Attach resource files (supports tab-completion)",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            resolve_path=True,
-        ),
-    ] = None,
-    export: Annotated[
-        Path | None,
-        typer.Option(
-            "--export",
-            "-e",
-            help="Export session run transcript to a Markdown file",
-            file_okay=True,
-            dir_okay=False,
-            writable=True,
-            resolve_path=True,
-        ),
-    ] = None,
-    on_turn_end: Annotated[
-        str | None,
-        typer.Option(
-            "--on-turn-end",
-            "-k",
-            help="Shell command or script to execute when turn completes",
-        ),
-    ] = None,
-    chain_prompt: Annotated[
-        str | None,
-        typer.Option(
-            "--chain-prompt",
-            help="Follow-up prompt to send automatically when turn completes",
+            "-s",
+            "--session",
+            help="Session name (overrides global -s)",
+            autocompletion=complete_session,
         ),
     ] = None,
     on_permission: Annotated[
@@ -1065,15 +1001,17 @@ def exec(
         ),
     ] = None,
 ) -> None:
-    """One-shot prompt (no session persistence)."""
+    """Send a prompt to the agent (saves session for subsequent prompts unless --ephemeral is used)."""
     agent_binary = _require_agent(ctx)
     prompt_text = _resolve_prompt_text(prompt, file)
+    session_name = session or ctx.obj["session_name"]
     _run_async(
         _run_prompt(
             agent_binary=agent_binary,
             prompt_text=prompt_text,
+            session_name=session_name,
             auto_yes=ctx.obj["auto_yes"],
-            persist=False,
+            persist=not ephemeral,
             verbose=ctx.obj.get("verbose", False),
             read_only=ctx.obj.get("read_only", False),
             resources=resource,

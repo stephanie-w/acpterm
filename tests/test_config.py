@@ -78,8 +78,8 @@ def test_prompt_exits_2_when_no_agent(
     "args",
     [
         ["prompt", "--help"],
-        ["exec", "--help"],
         ["models", "list", "--help"],
+        ["modes", "list", "--help"],
         ["sessions", "list", "--help"],
     ],
 )

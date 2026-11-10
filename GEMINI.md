@@ -32,6 +32,7 @@ This file tracks the design decisions, tasks, and progress for improvements to t
 - [x] Remove redundant `--refresh` options across list commands
 - [x] Implement mode and model validation with fuzzy matching ("Did you mean...?")
 - [x] Implement shell `TAB` auto-completion callbacks for `-a`, `-s`, `-m`, and `--mode`
+- [x] Consolidate `exec` and `prompt` into a single `prompt` command with `-E / --ephemeral` flag
 
 ## 🛠️ Configuration Redesign
 
@@ -49,6 +50,7 @@ This provided no automatic type validation or clear configuration structure.
 We will use a Pydantic model (`Config`) to represent the configuration layout:
 ```python
 from pydantic import BaseModel, Field
+
 
 class Config(BaseModel):
     agents: dict[str, str] = Field(default_factory=dict)

@@ -20,15 +20,15 @@ Run the exact same prompt across multiple agents:
 
 ```bash
 # Benchmark 1: Opencode
-acpterm -a opencode exec "Implement LRU Cache with O(1) ops and pytest tests" \
+acpterm -a opencode prompt -E "Implement LRU Cache with O(1) ops and pytest tests" \
   --export benchmarks/opencode_lru.md
 
 # Benchmark 2: Kiro
-acpterm -a kiro exec "Implement LRU Cache with O(1) ops and pytest tests" \
+acpterm -a kiro prompt -E "Implement LRU Cache with O(1) ops and pytest tests" \
   --export benchmarks/kiro_lru.md
 
 # Benchmark 3: Antigravity (agy)
-acpterm -a agy exec "Implement LRU Cache with O(1) ops and pytest tests" \
+acpterm -a agy prompt -E "Implement LRU Cache with O(1) ops and pytest tests" \
   --export benchmarks/agy_lru.md
 ```
 

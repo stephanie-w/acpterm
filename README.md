@@ -27,7 +27,7 @@ uv tool install .
 One-shot prompt (no session saved):
 
 ```bash
-acpterm -a opencode exec "what does this repo do?"
+acpterm -a opencode prompt -E "what does this repo do?"
 ```
 
 Create a named session and send prompts:
@@ -65,23 +65,16 @@ acpterm [OPTIONS] COMMAND [ARGS]...
 
 #### `prompt`
 
-Send a prompt to an agent. Automatically creates or resumes the session.
+Send a prompt to an agent. Automatically creates or resumes the session (unless `-E/--ephemeral` is passed).
 
 ```bash
 acpterm -a opencode prompt "refactor the auth module"
 acpterm -a opencode prompt -s api-session "implement token pagination"
 acpterm -a opencode -r prompt "continue implementation"
-acpterm -a opencode prompt -y "do stuff"              # auto-approve permissions
-echo "explain this repo" | acpterm -a opencode prompt  # pipe prompt from stdin
-acpterm -a opencode prompt --file prompt.md             # load prompt from file
-```
-
-#### `exec`
-
-One-shot prompt — no session persisted. Good for quick questions or CI scripts.
-
-```bash
-acpterm -a opencode exec "explain this codebase in one sentence"
+acpterm -a opencode prompt -E "explain this codebase in one sentence"  # one-shot ephemeral run
+acpterm -a opencode prompt -y "do stuff"                              # auto-approve permissions
+echo "explain this repo" | acpterm -a opencode prompt                  # pipe prompt from stdin
+acpterm -a opencode prompt --file prompt.md                             # load prompt from file
 ```
 
 ## Supported Agents
@@ -142,7 +135,7 @@ You can customize the LLM model and agent operating mode in two ways:
 
 1. **Temporary Override**: Pass the global `-m` / `--model` or `--mode` options to override settings for the current command:
    ```bash
-   acpterm -a opencode -m gemini-2.5-flash --mode plan exec "explain this project"
+   acpterm -a opencode -m gemini-2.5-flash --mode plan prompt -E "explain this project"
    ```
 
 2. **Persistent Default**: Set the default model or mode for an agent using the `models set` and `modes set` commands. This updates your configuration file so future sessions automatically run with them:
@@ -169,7 +162,7 @@ Model and mode preferences are saved per-agent in `~/.acpterm/config.json` under
 You can run agents in read-only mode by passing the `--read-only` flag globally:
 
 ```bash
-acpterm -a opencode --read-only exec "analyze the entry point and list its dependencies"
+acpterm -a opencode --read-only prompt -E "analyze the entry point and list its dependencies"
 ```
 
 In read-only mode:
@@ -200,13 +193,13 @@ You can raise this limit by configuring `max_prompt_chars` in your configuration
 Run a shell command or script when the turn completes using `-k` / `--on-turn-end`:
 
 ```bash
-acpterm -a opencode exec "refactor the auth module" -k "uv run ruff format"
+acpterm -a opencode prompt -E "refactor the auth module" -k "uv run ruff format"
 ```
 
 Automatically chain a follow-up prompt to the agent:
 
 ```bash
-acpterm -a opencode exec "implement data validation" --chain-prompt "Now generate pytest unit tests for this code."
+acpterm -a opencode prompt -E "implement data validation" --chain-prompt "Now generate pytest unit tests for this code."
 ```
 
 Dynamic Permission Policy Hooks (`-p` / `--on-permission`):
@@ -214,7 +207,7 @@ Dynamic Permission Policy Hooks (`-p` / `--on-permission`):
 Evaluate file/command permissions dynamically using a policy script:
 
 ```bash
-acpterm -a opencode exec "refactor code" -p "python3 scripts/permission_policy.py"
+acpterm -a opencode prompt -E "refactor code" -p "python3 scripts/permission_policy.py"
 ```
 
 * **Exit Code 0**: Auto-Approve (Allowed)
@@ -224,7 +217,7 @@ acpterm -a opencode exec "refactor code" -p "python3 scripts/permission_policy.p
 Combine transcript export with performance monitoring:
 
 ```bash
-SLOW_THRESHOLD_SECONDS=10.0 acpterm -a opencode exec "build the CLI features" \
+SLOW_THRESHOLD_SECONDS=10.0 acpterm -a opencode prompt -E "build the CLI features" \
   --export transcript.md \
   -k "python3 scripts/monitor_slow_response.py"
 ```

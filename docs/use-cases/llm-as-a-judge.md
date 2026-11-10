@@ -27,10 +27,10 @@ Evaluate python code quality against project rules using `skills/llm_judge/SKILL
 
 ```bash
 # Step 1: Run target task and export transcript
-acpterm -a opencode exec "refactor the authentication module" --export transcript.md
+acpterm -a opencode prompt -E "refactor the authentication module" --export transcript.md
 
 # Step 2: Run judge evaluation using skill instructions
-acpterm -a opencode exec -f skills/llm_judge/SKILL.md "Evaluate the transcript in transcript.md against code quality guidelines."
+acpterm -a opencode prompt -E -f skills/llm_judge/SKILL.md "Evaluate the transcript in transcript.md against code quality guidelines."
 ```
 
 ### Example B: MCP Skill Adoption & Parameter Scoping Evaluation
@@ -39,10 +39,10 @@ Evaluate whether an agent used an MCP server (such as `code-indexer`) properly u
 
 ```bash
 # Step 1: Run task requiring symbol retrieval and export transcript
-acpterm -a opencode exec "Find CodeIndexer definition in code-indexer" --export transcript.md
+acpterm -a opencode prompt -E "Find CodeIndexer definition in code-indexer" --export transcript.md
 
 # Step 2: Run judge evaluation using MCP skill rules
-acpterm -a opencode exec -f skills/mcp_usage_judge/SKILL.md "Evaluate the MCP skill usage in transcript.md."
+acpterm -a opencode prompt -E -f skills/mcp_usage_judge/SKILL.md "Evaluate the MCP skill usage in transcript.md."
 ```
 
 ---

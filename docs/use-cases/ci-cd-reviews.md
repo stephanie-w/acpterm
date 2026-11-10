@@ -7,7 +7,7 @@ This guide explains how to run `acpterm` in CI/CD pipelines (e.g. GitHub Actions
 ## 🚀 Key Advantages in CI/CD
 
 1. **Read-Only Safety (`--read-only`)**: Prevents the agent from accidentally modifying workspace files or corrupting repository state during a CI pipeline check.
-2. **Headless Execution (`exec`)**: One-shot execution mode designed for non-interactive runner environments.
+2. **Ephemeral Execution (`prompt -E`)**: One-shot execution mode without persisting session state, designed for non-interactive runner environments.
 3. **Structured Transcript Export (`--export`)**: Generates a clean Markdown report containing the review summary, findings, and metadata.
 
 ---
@@ -47,7 +47,7 @@ jobs:
           git diff origin/${{ github.base_ref }}...HEAD > pr_diff.patch
 
           # Run acpterm in read-only mode passing diff via stdin
-          cat pr_diff.patch | acpterm -a opencode --read-only exec \
+          cat pr_diff.patch | acpterm -a opencode --read-only prompt -E \
             "Review this git diff for bugs, performance bottlenecks, and security risks. Provide actionable feedback." \
             --export pr_review.md
 
@@ -72,7 +72,7 @@ jobs:
 To strictly enforce file reading or command execution boundaries in CI, use a permission policy script:
 
 ```bash
-acpterm -a opencode --read-only exec "Analyze changes" -p "python3 scripts/ci_permission_policy.py"
+acpterm -a opencode --read-only prompt -E "Analyze changes" -p "python3 scripts/ci_permission_policy.py"
 ```
 
 ### `scripts/ci_permission_policy.py`

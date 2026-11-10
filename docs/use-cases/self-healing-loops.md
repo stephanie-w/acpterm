@@ -17,7 +17,7 @@ When an agent completes a turn:
 ### Step 1: Execute Initial Refactoring Request
 
 ```bash
-acpterm -a opencode exec "Refactor src/auth.py to use modern async/await patterns" \
+acpterm -a opencode prompt -E "Refactor src/auth.py to use modern async/await patterns" \
   -k "uv run pytest tests/test_auth.py" \
   --chain-prompt "The test suite run completed with exit code {exit_code}. If any tests failed, analyze the failure and update the implementation to fix it."
 ```
@@ -69,7 +69,7 @@ if __name__ == "__main__":
 ### Command Execution:
 
 ```bash
-acpterm -a opencode exec "Implement rate limiting middleware" \
+acpterm -a opencode prompt -E "Implement rate limiting middleware" \
   --export transcript.md \
   -k "python3 scripts/verify_and_chain.py" \
   --chain-prompt "Verification failed. Review the errors in the output above and fix the issues."
