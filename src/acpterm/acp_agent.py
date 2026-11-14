@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from contextlib import AbstractAsyncContextManager
+import logging
 from pathlib import Path
 from typing import Any
 import warnings
@@ -37,10 +38,69 @@ if False:  # TYPE_CHECKING
 
 PROTOCOL_VERSION = 1
 _console = Console(highlight=False)
+logger = logging.getLogger(__name__)
 
 # Permission kinds that are safe to auto-approve in read-only mode.
 # Only non-mutating filesystem reads qualify; writes, deletes, executes, etc. remain blocked.
 _READ_ONLY_SAFE_KINDS: frozenset[str] = frozenset({"read"})
+
+
+def _agent_capabilities(init_resp: Any) -> Any:
+    """Read agent capabilities from an initialize response in either naming style."""
+    if init_resp is None:
+        return None
+    return getattr(init_resp, "agent_capabilities", None) or getattr(
+        init_resp, "agentCapabilities", None
+    )
+
+
+def _supports_resume(init_resp: Any) -> bool:
+    """Return whether the agent advertises support for ``session/resume``."""
+    agent_caps = _agent_capabilities(init_resp)
+    if agent_caps is None:
+        return False
+    session_caps = getattr(agent_caps, "session_capabilities", None) or getattr(
+        agent_caps, "sessionCapabilities", None
+    )
+    return (
+        session_caps is not None and getattr(session_caps, "resume", None) is not None
+    )
+
+
+def _supports_load_session(init_resp: Any) -> bool:
+    """Return whether the agent advertises support for ``session/load``."""
+    agent_caps = _agent_capabilities(init_resp)
+    if agent_caps is None:
+        return False
+    return bool(
+        getattr(agent_caps, "load_session", None)
+        or getattr(agent_caps, "loadSession", None)
+    )
+
+
+def _has_model_config_option(session_resp: Any) -> bool:
+    """Return whether the session handshake exposes a ``model`` config option."""
+    if session_resp is None:
+        return False
+    config_options = getattr(session_resp, "config_options", None) or getattr(
+        session_resp, "configOptions", None
+    )
+    if not config_options:
+        return False
+    for option in config_options:
+        option_id = (
+            option.get("id")
+            if isinstance(option, dict)
+            else getattr(option, "id", None)
+        )
+        if option_id == "model":
+            return True
+    return False
+
+
+def _is_method_not_found(exc: BaseException) -> bool:
+    """Return whether ``exc`` is a JSON-RPC ``-32601 Method not found`` error."""
+    return isinstance(exc, RequestError) and exc.code == -32601
 
 
 def _verbose_stream_observer(event: StreamEvent) -> None:
@@ -440,6 +500,7 @@ class ACPAgent:
         self._process: asyncio.subprocess.Process | None = None
         self._transport_ctx: AbstractAsyncContextManager | None = None
         self._session_id: str | None = None
+        self._model_uses_config_option: bool | None = None
 
     async def start(
         self,
@@ -519,43 +580,49 @@ class ACPAgent:
 
         session_resp = None
         if target:
-            try:
-                agent_caps = getattr(init_resp, "agent_capabilities", None) or getattr(
-                    init_resp, "agentCapabilities", None
-                )
-                sess_caps = (
-                    getattr(agent_caps, "session_capabilities", None)
-                    or getattr(agent_caps, "sessionCapabilities", None)
-                    if agent_caps
-                    else None
-                )
-                can_resume = (
-                    bool(getattr(sess_caps, "resume", None)) if sess_caps else False
-                )
+            if _supports_resume(init_resp):
+                restore = "resume"
+            elif _supports_load_session(init_resp):
+                restore = "load"
+            else:
+                restore = None
 
-                if can_resume:
-                    session_resp = await self._conn.resume_session(
-                        session_id=target, cwd=cwd
-                    )
-                else:
-                    session_resp = await self._conn.load_session(
-                        cwd=cwd, session_id=target
-                    )
-                self._session_id = target
-            except Exception as e:
+            if restore is None:
+                # The agent cannot restore saved sessions, so forget the stale
+                # entry instead of calling an unsupported optional method.
                 from . import session_store
 
-                if not self._silent:
-                    _console.print(
-                        f"[yellow]Warning: Could not resume session '{target}' ({e}). Starting a new session...[/yellow]"
-                    )
                 session_store.remove(self.agent_binary, cwd, self.session_name)
                 target = None
-                session_resp = None
+            else:
+                try:
+                    if restore == "resume":
+                        session_resp = await self._conn.resume_session(
+                            session_id=target, cwd=cwd
+                        )
+                    else:
+                        session_resp = await self._conn.load_session(
+                            cwd=cwd, session_id=target
+                        )
+                    self._session_id = target
+                except Exception as e:
+                    from . import session_store
+
+                    if not self._silent:
+                        _console.print(
+                            f"[yellow]Warning: Could not resume session '{target}' ({e}). Starting a new session...[/yellow]"
+                        )
+                    session_store.remove(self.agent_binary, cwd, self.session_name)
+                    target = None
+                    session_resp = None
 
         if session_resp is None:
             session_resp = await self._conn.new_session(cwd=cwd, mcp_servers=[])
             self._session_id = session_resp.session_id if session_resp else None
+
+        self._model_uses_config_option = (
+            _has_model_config_option(session_resp) if session_resp is not None else None
+        )
 
         if not self._silent and session_resp:
             display_initial_session_info(session_resp)
@@ -718,22 +785,56 @@ class ACPAgent:
         return mode_id if resp else None
 
     async def set_model(self, model_id: str) -> None:
-        if self._conn is None or self._session_id is None:
+        conn = self._conn
+        session_id = self._session_id
+        if conn is None or session_id is None:
             raise RuntimeError("Agent not started")
-        try:
-            await self._conn.set_config_option(
+
+        async def via_config_option() -> None:
+            await conn.set_config_option(
                 config_id="model",
-                session_id=self._session_id,
+                session_id=session_id,
                 value=model_id,
             )
-        except Exception:
-            # agent-client-protocol v0.11.0 lacks set_session_model().
-            # Fallback: raw session/set_model request (supported by opencode v1.2.24+).
-            # TODO: replace with self._conn.set_session_model() when the SDK ships it.
-            await self._conn._conn.send_request(
+
+        async def via_set_model() -> None:
+            # agent-client-protocol v0.11.0 lacks set_session_model(); this raw
+            # request is the extension supported by opencode v1.2.24+.
+            # TODO: replace with conn.set_session_model() when the SDK ships it.
+            await conn._conn.send_request(
                 "session/set_model",
-                {"sessionId": self._session_id, "modelId": model_id},
+                {"sessionId": session_id, "modelId": model_id},
             )
+
+        if self._model_uses_config_option is False:
+            primary, primary_name = via_set_model, "session/set_model"
+            alternate, alternate_name = via_config_option, "session/set_config_option"
+        else:
+            primary, primary_name = via_config_option, "session/set_config_option"
+            alternate, alternate_name = via_set_model, "session/set_model"
+
+        try:
+            await primary()
+        except RequestError as exc:
+            if not _is_method_not_found(exc):
+                raise
+            logger.warning(
+                "%s is unavailable; falling back to %s", primary_name, alternate_name
+            )
+            if not self._silent:
+                _console.print(
+                    f"[dim]\\[model][/dim] {primary_name} unavailable; "
+                    f"using {alternate_name}"
+                )
+            try:
+                await alternate()
+            except Exception:
+                logger.warning(
+                    "Model selection failed via both %s and %s",
+                    primary_name,
+                    alternate_name,
+                )
+                raise
 
     @property
     def session_id(self) -> str | None:
