@@ -103,6 +103,31 @@ def _is_method_not_found(exc: BaseException) -> bool:
     return isinstance(exc, RequestError) and exc.code == -32601
 
 
+_USAGE_TOKEN_FIELDS: tuple[str, ...] = (
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "thought_tokens",
+    "cached_read_tokens",
+    "cached_write_tokens",
+)
+
+
+def _extract_usage_tokens(usage: Any) -> dict[str, Any]:
+    """Extract non-None token-count fields from an ACP ``Usage`` payload."""
+    if usage is None:
+        return {}
+    if hasattr(usage, "model_dump"):
+        data = usage.model_dump(exclude_none=True)
+    elif isinstance(usage, dict):
+        data = usage
+    else:
+        data = {name: getattr(usage, name, None) for name in _USAGE_TOKEN_FIELDS}
+    return {
+        name: data[name] for name in _USAGE_TOKEN_FIELDS if data.get(name) is not None
+    }
+
+
 def _verbose_stream_observer(event: StreamEvent) -> None:
     """Log every JSON-RPC message sent or received when --verbose is active."""
     import json
@@ -768,6 +793,9 @@ class ACPAgent:
         format_stop_reason(stop_reason)
         if self._transcript_recorder:
             self._transcript_recorder.set_stop_reason(stop_reason)
+            usage = _extract_usage_tokens(getattr(resp, "usage", None))
+            if usage:
+                self._transcript_recorder.set_usage(usage)
         return stop_reason
 
     async def cancel(self) -> bool:

@@ -17,6 +17,7 @@ from acpterm.acp_agent import (
     ACPAgent,
     AgentClient,
 )
+from acpterm.transcript import TranscriptRecorder
 
 
 class _SpawnShortCircuit(RuntimeError):
@@ -132,6 +133,7 @@ class _FakeConnection:
         self.resume_session = AsyncMock()
         self.load_session = AsyncMock()
         self.new_session = AsyncMock()
+        self.prompt = AsyncMock()
         self.set_config_option = AsyncMock()
         self._conn = SimpleNamespace(send_request=AsyncMock())
 
@@ -163,7 +165,9 @@ def _install_start_harness(
 
 
 def _init_response(
-    *, resume: object | None = None, load_session: bool | None = None
+    *,
+    resume: acp_schema.SessionResumeCapabilities | dict[str, Any] | None = None,
+    load_session: bool | None = None,
 ) -> acp_schema.InitializeResponse:
     return acp_schema.InitializeResponse(
         protocol_version=1,
@@ -445,3 +449,187 @@ async def test_set_model_with_unknown_capability_trials_config_option() -> None:
         "session/set_model",
         {"sessionId": "session-1", "modelId": "gpt-5"},
     )
+
+
+def _prompt_response(
+    *, usage: acp_schema.Usage | None = None
+) -> acp_schema.PromptResponse:
+    return acp_schema.PromptResponse(stop_reason="end_turn", usage=usage)
+
+
+def _usage_tokens() -> acp_schema.Usage:
+    return acp_schema.Usage(
+        total_tokens=150,
+        input_tokens=100,
+        output_tokens=40,
+        thought_tokens=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_records_usage() -> None:
+    agent, conn = _agent_with_conn()
+    recorder = TranscriptRecorder("prompt")
+    agent._transcript_recorder = recorder
+    conn.prompt = AsyncMock(return_value=_prompt_response(usage=_usage_tokens()))
+
+    await agent.send_prompt("prompt")
+
+    assert recorder.usage == {
+        "total_tokens": 150,
+        "input_tokens": 100,
+        "output_tokens": 40,
+        "thought_tokens": 10,
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_preserves_existing_cost_and_usage_update() -> None:
+    agent, conn = _agent_with_conn()
+    recorder = TranscriptRecorder("prompt")
+    cost = SimpleNamespace(amount=0.42, currency="USD")
+    recorder.set_usage({"used": 100, "size": 1000, "cost": cost})
+    agent._transcript_recorder = recorder
+    conn.prompt = AsyncMock(return_value=_prompt_response(usage=_usage_tokens()))
+
+    await agent.send_prompt("prompt")
+
+    assert recorder.usage is not None
+    assert recorder.usage["used"] == 100
+    assert recorder.usage["size"] == 1000
+    assert recorder.usage["cost"] is cost
+    assert recorder.usage["total_tokens"] == 150
+    assert recorder.usage["input_tokens"] == 100
+    assert recorder.usage["output_tokens"] == 40
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_leaves_usage_none_when_resp_usage_is_none() -> None:
+    agent, conn = _agent_with_conn()
+    recorder = TranscriptRecorder("prompt")
+    cost = SimpleNamespace(amount=0.42, currency="USD")
+    recorder.set_usage({"used": 100, "size": 1000, "cost": cost})
+    agent._transcript_recorder = recorder
+    conn.prompt = AsyncMock(return_value=_prompt_response(usage=None))
+
+    await agent.send_prompt("prompt")
+
+    assert recorder.usage == {"used": 100, "size": 1000, "cost": cost}
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_without_recorder_handles_resp_usage() -> None:
+    agent, conn = _agent_with_conn()
+    agent._transcript_recorder = None
+    conn.prompt = AsyncMock(return_value=_prompt_response(usage=_usage_tokens()))
+
+    stop_reason = await agent.send_prompt("prompt")
+
+    assert stop_reason == "end_turn"
+
+
+def test_transcript_recorder_to_markdown_with_token_usage() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.set_stop_reason("end_turn")
+    recorder.set_usage(
+        {
+            "total_tokens": 150,
+            "input_tokens": 100,
+            "output_tokens": 40,
+            "thought_tokens": 10,
+        }
+    )
+
+    markdown = recorder.to_markdown()
+
+    assert "- **Token Usage**: 150 tokens" in markdown
+
+
+def test_transcript_recorder_merges_usage_without_clobbering_cost() -> None:
+    recorder = TranscriptRecorder("prompt")
+    cost = SimpleNamespace(amount=0.42, currency="USD")
+    recorder.set_usage({"used": 100, "size": 1000, "cost": cost})
+
+    recorder.set_usage({"total_tokens": 150, "input_tokens": 100, "output_tokens": 40})
+    recorder.set_usage({"used": None, "size": None, "cost": None})
+
+    assert recorder.usage == {
+        "used": 100,
+        "size": 1000,
+        "cost": cost,
+        "total_tokens": 150,
+        "input_tokens": 100,
+        "output_tokens": 40,
+    }
+
+
+def test_transcript_recorder_keeps_token_usage_when_usage_update_arrives_late() -> None:
+    recorder = TranscriptRecorder("prompt")
+
+    recorder.set_usage({"total_tokens": 150, "input_tokens": 100, "output_tokens": 40})
+    recorder.set_usage({"used": 100, "size": 1000, "cost": None})
+
+    assert recorder.usage == {
+        "total_tokens": 150,
+        "input_tokens": 100,
+        "output_tokens": 40,
+        "used": 100,
+        "size": 1000,
+        "cost": None,
+    }
+
+
+def test_transcript_recorder_skips_metadata_for_all_none_usage() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.set_usage({"used": None, "size": None, "cost": None})
+
+    markdown = recorder.to_markdown()
+
+    assert "## Metadata" not in markdown
+
+
+@pytest.mark.parametrize(
+    "bad_total",
+    ["150", 150.5, float("nan"), float("inf"), True, -1],
+)
+def test_transcript_recorder_ignores_malformed_total_tokens(
+    bad_total: object,
+) -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.set_usage({"total_tokens": bad_total, "input_tokens": 100})
+
+    markdown = recorder.to_markdown()
+
+    assert "**Token Usage**" not in markdown
+
+
+def test_transcript_recorder_skips_malformed_token_breakdown() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.set_usage(
+        {
+            "total_tokens": 150,
+            "input_tokens": "100",
+            "output_tokens": 40,
+            "thought_tokens": float("nan"),
+        }
+    )
+
+    markdown = recorder.to_markdown()
+
+    assert "- **Token Usage**: 150 tokens (output: 40)" in markdown
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["100", 100.5, float("nan"), float("inf"), True, -1],
+)
+def test_transcript_recorder_skips_malformed_context_usage(bad_value: object) -> None:
+    for key in ("used", "size"):
+        recorder = TranscriptRecorder("prompt")
+        usage: dict[str, Any] = {"used": 100, "size": 1000}
+        usage[key] = bad_value
+        recorder.set_usage(usage)
+
+        markdown = recorder.to_markdown()
+
+        assert "**Context Usage**" not in markdown
