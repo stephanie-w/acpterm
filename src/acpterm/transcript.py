@@ -81,8 +81,13 @@ class TranscriptRecorder:
             tc["raw_output"] = raw_output
 
     def set_usage(self, usage: dict[str, Any]) -> None:
-        """Set token usage metadata."""
-        self.usage = usage
+        """Merge token usage metadata without clobbering existing values."""
+        if self.usage is None:
+            self.usage = dict(usage)
+            return
+        for key, value in usage.items():
+            if value is not None or key not in self.usage:
+                self.usage[key] = value
 
     def set_stop_reason(self, reason: str) -> None:
         """Set the turn's final stop reason."""
@@ -205,12 +210,26 @@ class TranscriptRecorder:
             lines.append("".join(self.messages).strip())
             lines.append("")
 
-        if self.stop_reason:
+        if self.stop_reason or self.usage:
             lines.append("## Metadata")
-            lines.append(f"- **Stop Reason**: {self.stop_reason}")
+            if self.stop_reason:
+                lines.append(f"- **Stop Reason**: {self.stop_reason}")
             if self.duration_seconds is not None:
                 lines.append(f"- **Duration**: {self.duration_seconds:.2f} seconds")
             if self.usage:
+                total_tokens = self.usage.get("total_tokens")
+                if total_tokens is not None:
+                    breakdown = [
+                        f"{label}: {self.usage[key]:,}"
+                        for key, label in (
+                            ("input_tokens", "input"),
+                            ("output_tokens", "output"),
+                            ("thought_tokens", "thought"),
+                        )
+                        if self.usage.get(key) is not None
+                    ]
+                    suffix = f" ({', '.join(breakdown)})" if breakdown else ""
+                    lines.append(f"- **Token Usage**: {total_tokens:,} tokens{suffix}")
                 used = self.usage.get("used")
                 size = self.usage.get("size")
                 cost = self.usage.get("cost")
