@@ -227,6 +227,7 @@ screenshots/
 .gemini/
 .opencode/
 .agents/
-standards/ 
+.worktrees/
+.factory/runs
 demos/.eval_workspace/
 demos/.hooks_workspace/
