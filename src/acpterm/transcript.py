@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Any
 
 
+def _token_count(value: Any) -> int | None:
+    """Return a valid non-negative token count, or ``None`` for malformed input."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 class TranscriptRecorder:
     """Records session events during an agent run and exports them as Markdown."""
 
@@ -211,38 +218,43 @@ class TranscriptRecorder:
             lines.append("")
 
         if self.stop_reason or self.usage:
-            lines.append("## Metadata")
+            metadata: list[str] = []
             if self.stop_reason:
-                lines.append(f"- **Stop Reason**: {self.stop_reason}")
+                metadata.append(f"- **Stop Reason**: {self.stop_reason}")
             if self.duration_seconds is not None:
-                lines.append(f"- **Duration**: {self.duration_seconds:.2f} seconds")
+                metadata.append(f"- **Duration**: {self.duration_seconds:.2f} seconds")
             if self.usage:
-                total_tokens = self.usage.get("total_tokens")
+                total_tokens = _token_count(self.usage.get("total_tokens"))
                 if total_tokens is not None:
-                    breakdown = [
-                        f"{label}: {self.usage[key]:,}"
-                        for key, label in (
-                            ("input_tokens", "input"),
-                            ("output_tokens", "output"),
-                            ("thought_tokens", "thought"),
-                        )
-                        if self.usage.get(key) is not None
-                    ]
+                    breakdown = []
+                    for key, label in (
+                        ("input_tokens", "input"),
+                        ("output_tokens", "output"),
+                        ("thought_tokens", "thought"),
+                    ):
+                        count = _token_count(self.usage.get(key))
+                        if count is not None:
+                            breakdown.append(f"{label}: {count:,}")
                     suffix = f" ({', '.join(breakdown)})" if breakdown else ""
-                    lines.append(f"- **Token Usage**: {total_tokens:,} tokens{suffix}")
+                    metadata.append(
+                        f"- **Token Usage**: {total_tokens:,} tokens{suffix}"
+                    )
                 used = self.usage.get("used")
                 size = self.usage.get("size")
                 cost = self.usage.get("cost")
                 if used is not None and size is not None:
                     pct = (used / size * 100) if size > 0 else 0
-                    lines.append(
+                    metadata.append(
                         f"- **Context Usage**: {used:,} / {size:,} tokens ({pct:.1f}%)"
                     )
                 if cost is not None:
                     amount = getattr(cost, "amount", None)
                     currency = getattr(cost, "currency", None)
                     if amount is not None and currency:
-                        lines.append(f"- **Cost**: ${amount:.2f} {currency}")
-            lines.append("")
+                        metadata.append(f"- **Cost**: ${amount:.2f} {currency}")
+            if metadata:
+                lines.append("## Metadata")
+                lines.extend(metadata)
+                lines.append("")
 
         return "\n".join(lines)
