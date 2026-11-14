@@ -617,3 +617,19 @@ def test_transcript_recorder_skips_malformed_token_breakdown() -> None:
     markdown = recorder.to_markdown()
 
     assert "- **Token Usage**: 150 tokens (output: 40)" in markdown
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["100", 100.5, float("nan"), float("inf"), True, -1],
+)
+def test_transcript_recorder_skips_malformed_context_usage(bad_value: object) -> None:
+    for key in ("used", "size"):
+        recorder = TranscriptRecorder("prompt")
+        usage: dict[str, Any] = {"used": 100, "size": 1000}
+        usage[key] = bad_value
+        recorder.set_usage(usage)
+
+        markdown = recorder.to_markdown()
+
+        assert "**Context Usage**" not in markdown

@@ -239,8 +239,8 @@ class TranscriptRecorder:
                     metadata.append(
                         f"- **Token Usage**: {total_tokens:,} tokens{suffix}"
                     )
-                used = self.usage.get("used")
-                size = self.usage.get("size")
+                used = _token_count(self.usage.get("used"))
+                size = _token_count(self.usage.get("size"))
                 cost = self.usage.get("cost")
                 if used is not None and size is not None:
                     pct = (used / size * 100) if size > 0 else 0
