@@ -228,6 +228,6 @@ screenshots/
 .opencode/
 .agents/
 .worktrees/
-.factory/runs
+.factory/
 demos/.eval_workspace/
 demos/.hooks_workspace/
