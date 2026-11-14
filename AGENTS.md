@@ -55,25 +55,7 @@ To ensure a safe and collaborative development experience, follow this interacti
 
 ## 2. Strict Anti-Patterns (The "Do Not Use" List)
 
-Violating these rules will result in rejected code.
-
-### 🚫 Code Structure
-- **No Mutable Defaults**: `def foo(items=[])` is forbidden. Use `items=None`.
-- **No Broad Exceptions**: `except Exception:` without logging or re-raising is forbidden.
-- **No Global State**: Do not rely on or modify global variables. Pass state explicitly.
-- **No Magic Numbers**: Define constants with descriptive names (e.g., `MAX_RETRIES = 3` instead of just `3`).
-
-### 🚫 Observability
-- **No `print()` Statements**: Use the standard `logging` module or `structlog`. `print()` is for CLI output only, not debugging.
-- **No Silent Failures**: Errors must be explicitly handled or bubbled up.
-
-### 🚫 Filesystem
-- **No Hardcoded Paths**: Use `pathlib.Path` and relative paths. Never use absolute paths like `/home/user/...`.
-
-### 🚫 Typing (Modern Python 3.10+)
-- **No `typing.List`, `typing.Dict`, etc.**: Use built-in generics (e.g., `list[str]`, `dict[str, int]`).
-- **No `typing.Optional`**: Use the union operator `X | None`.
-- **No `typing.Union`**: Use the `|` operator (e.g., `int | str`).
+Typing/modern-syntax and bug-bear rules are enforced deterministically by `just check` (ruff `E,W,F,I,B,C4,UP,RUF`). Subjective standards (test effectiveness, revert-test heuristic, domain edge cases) live in the reviewer rubric, not here.
 
 ## 3. Python Tech Stack Summary
 
@@ -106,11 +88,13 @@ Before signaling completion, verify:
 ## 6. Important Things to Keep in Mind
 
 - Always assume the user's time is valuable; provide high-signal updates.
+- **Verification Scoping**: Only run test and typecheck commands (`just fix`, `just typecheck`, `just test-fast`) when code logic or tests were modified. Never run tests for documentation-only, markdown, or planning updates.
 - Prioritize stability and protocol correctness over visual flair.
 - There is a `demos` repository dedicated to implement simplified UI to test UI features or modifications. USE IT...
 - **Textual Modal Patterns**: When using `ModalScreen` with `push_screen_wait()`, always use `run_worker()` to avoid `NoActiveWorker` errors. Modal screens require proper worker context for async operations.
 - **Widget ID Rules**: Textual widget IDs must contain only letters, numbers, underscores, or hyphens, and must not begin with a number. Sanitize dynamic IDs (replace `/`, `.`, `:` with hyphens).
 - **Keyboard Navigation**: Use `ListView` with `ListItem` widgets instead of `Static` widgets for selectable lists. `Static` widgets don't support keyboard navigation.
+- **Search & Filtering Tool Preference**: Always prefer `rg` over `grep`, `fd` over `find`, and `jq` over ad-hoc `sed`/`awk`/Python for JSON parsing. These tools respect `.gitignore`, avoid vendor noise, and are faster and more precise.
 
 ## 7. Breaking Loops & Isolation
 
