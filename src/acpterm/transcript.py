@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import time
 from typing import Any
+
+
+_TERMINAL_TOOL_CALL_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
+
+
+def _is_empty_raw_input(value: Any) -> bool:
+    """Return whether a raw input payload carries no data."""
+    return value is None or (isinstance(value, (str, list, dict)) and not value)
 
 
 def _token_count(value: Any) -> int | None:
@@ -27,6 +36,7 @@ class TranscriptRecorder:
         self.thoughts: list[str] = []
         self.messages: list[str] = []
         self.tool_calls: dict[str, dict[str, Any]] = {}
+        self._tool_call_starts: dict[str, float] = {}
         self.plan_entries: list[Any] = []
         self.file_operations: list[dict[str, str | None]] = []
         self.permissions: list[dict[str, str]] = []
@@ -50,6 +60,7 @@ class TranscriptRecorder:
         raw_input: Any | None = None,
     ) -> None:
         """Initialize a recorded tool call."""
+        self._tool_call_starts[tool_call_id] = time.monotonic()
         self.tool_calls[tool_call_id] = {
             "title": title,
             "kind": kind,
@@ -57,6 +68,7 @@ class TranscriptRecorder:
             "content": [],
             "raw_input": raw_input,
             "raw_output": None,
+            "duration_seconds": None,
         }
 
     def update_tool_call(
@@ -66,9 +78,11 @@ class TranscriptRecorder:
         title: str | None = None,
         content: str | None = None,
         raw_output: Any | None = None,
+        raw_input: Any | None = None,
     ) -> None:
         """Update an existing tool call's status or append output content."""
         if tool_call_id not in self.tool_calls:
+            self._tool_call_starts[tool_call_id] = time.monotonic()
             self.tool_calls[tool_call_id] = {
                 "title": title or "Unknown tool",
                 "kind": "other",
@@ -76,6 +90,7 @@ class TranscriptRecorder:
                 "content": [],
                 "raw_input": None,
                 "raw_output": None,
+                "duration_seconds": None,
             }
         tc = self.tool_calls[tool_call_id]
         if status:
@@ -86,6 +101,14 @@ class TranscriptRecorder:
             tc["content"].append(content)
         if raw_output:
             tc["raw_output"] = raw_output
+        if not _is_empty_raw_input(raw_input):
+            tc["raw_input"] = raw_input
+        if status in _TERMINAL_TOOL_CALL_STATUSES:
+            start = self._tool_call_starts.get(tool_call_id)
+            if start is None:
+                start = time.monotonic()
+                self._tool_call_starts[tool_call_id] = start
+            tc["duration_seconds"] = round(time.monotonic() - start, 3)
 
     def set_usage(self, usage: dict[str, Any]) -> None:
         """Merge token usage metadata without clobbering existing values."""
