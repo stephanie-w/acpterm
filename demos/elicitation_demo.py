@@ -15,7 +15,7 @@ from acp.schema import (
     ElicitationSchema,
     ElicitationStringPropertySchema,
     EnumOption,
-    UntitledMultiSelectItems,
+    StringMultiSelectItems,
 )
 
 from acpterm.elicitation import render_form
@@ -69,7 +69,7 @@ def main() -> None:
                 min_items=1,
                 max_items=3,
                 default=["cli", "backend"],
-                items=UntitledMultiSelectItems(
+                items=StringMultiSelectItems(
                     type="string",
                     enum=["cli", "backend", "frontend", "library", "docker"],
                 ),

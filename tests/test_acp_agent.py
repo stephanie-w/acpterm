@@ -528,6 +528,65 @@ async def test_send_prompt_without_recorder_handles_resp_usage() -> None:
     assert stop_reason == "end_turn"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt", ["hello", ""])
+async def test_send_prompt_builds_text_content_block(prompt: str) -> None:
+    agent, conn = _agent_with_conn()
+    conn.prompt = AsyncMock(return_value=_prompt_response())
+
+    await agent.send_prompt(prompt)
+
+    call = conn.prompt.await_args
+    assert call is not None
+    session_id, blocks = call.args
+    assert session_id == "session-1"
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], acp_schema.TextContentBlock)
+    assert blocks[0].type == "text"
+    assert blocks[0].text == prompt
+
+
+@pytest.mark.asyncio
+async def test_send_prompt_builds_resource_content_blocks(tmp_path: Path) -> None:
+    agent, conn = _agent_with_conn()
+    conn.prompt = AsyncMock(return_value=_prompt_response())
+    existing = tmp_path / "notes.txt"
+    existing.write_text("abc")
+    missing = tmp_path / "missing.txt"
+
+    await agent.send_prompt("summarize", resources=[existing, missing])
+
+    call = conn.prompt.await_args
+    assert call is not None
+    _, blocks = call.args
+    assert len(blocks) == 3
+    assert isinstance(blocks[1], acp_schema.ResourceContentBlock)
+    assert blocks[1].type == "resource_link"
+    assert blocks[1].name == "notes.txt"
+    assert blocks[1].uri == f"file://{existing.absolute()}"
+    assert blocks[1].size == 3
+    assert isinstance(blocks[2], acp_schema.ResourceContentBlock)
+    assert blocks[2].name == "missing.txt"
+    assert blocks[2].uri == f"file://{missing.absolute()}"
+    assert blocks[2].size is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("conn", "session_id"),
+    [(None, "session-1"), (cast(Any, _FakeConnection()), None)],
+)
+async def test_send_prompt_requires_started_agent(
+    conn: _FakeConnection | None, session_id: str | None
+) -> None:
+    agent = ACPAgent(project_root=Path("."), silent=True)
+    agent._conn = cast(Any, conn)
+    agent._session_id = session_id
+
+    with pytest.raises(RuntimeError, match="Agent not started"):
+        await agent.send_prompt("hello")
+
+
 def test_transcript_recorder_to_markdown_with_token_usage() -> None:
     recorder = TranscriptRecorder("prompt")
     recorder.set_stop_reason("end_turn")
