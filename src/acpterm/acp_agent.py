@@ -480,6 +480,36 @@ class AgentClient:
     async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
         pass
 
+    # MCP-over-ACP is an unstable 1.0.0 extension this client does not opt into,
+    # but the Client protocol still requires the handlers to exist.
+    async def connect_mcp(
+        self, server_id: str, **kwargs: Any
+    ) -> acp_schema.ConnectMcpResponse:
+        raise RequestError.method_not_found("mcp/connect")
+
+    async def disconnect_mcp(
+        self, connection_id: str, **kwargs: Any
+    ) -> acp_schema.DisconnectMcpResponse:
+        raise RequestError.method_not_found("mcp/disconnect")
+
+    async def mcp_message(
+        self,
+        connection_id: str,
+        method: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        raise RequestError.method_not_found("mcp/message")
+
+    async def notify_mcp(
+        self,
+        connection_id: str,
+        method: str,
+        params: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        pass
+
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         from .auth import resolve_auth_token
 
@@ -759,7 +789,6 @@ class ACPAgent:
         if self._conn is None or self._session_id is None:
             raise RuntimeError("Agent not started")
 
-        from acp import resource_link_block, text_block
         from acp.schema import (
             AudioContentBlock,
             EmbeddedResourceContentBlock,
@@ -774,11 +803,11 @@ class ACPAgent:
             | AudioContentBlock
             | ResourceContentBlock
             | EmbeddedResourceContentBlock
-        ] = [text_block(prompt)]
+        ] = [TextContentBlock(text=prompt)]
         if resources:
             for r_path in resources:
                 blocks.append(
-                    resource_link_block(
+                    ResourceContentBlock(
                         name=r_path.name,
                         uri=f"file://{r_path.absolute()}",
                         size=r_path.stat().st_size if r_path.exists() else None,
@@ -826,7 +855,7 @@ class ACPAgent:
             )
 
         async def via_set_model() -> None:
-            # agent-client-protocol v0.11.0 lacks set_session_model(); this raw
+            # agent-client-protocol 1.0.0 lacks set_session_model(); this raw
             # request is the extension supported by opencode v1.2.24+.
             # TODO: replace with conn.set_session_model() when the SDK ships it.
             await conn._conn.send_request(
