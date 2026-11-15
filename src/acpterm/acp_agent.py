@@ -480,8 +480,11 @@ class AgentClient:
     async def complete_elicitation(self, elicitation_id: str, **kwargs: Any) -> None:
         pass
 
-    # MCP-over-ACP is an unstable 1.0.0 extension this client does not opt into,
-    # but the Client protocol still requires the handlers to exist.
+    # MCP-over-ACP is an unstable 1.0.0 extension this client does not opt into
+    # (ClientSideConnection is built without use_unstable_protocol, so the router
+    # rejects these methods with method_not_found before they run). The stubs below
+    # exist only to satisfy the static `Client` protocol, which declares them as
+    # required members, so `AgentClient`/`CachingClient` stay type-assignable.
     async def connect_mcp(
         self, server_id: str, **kwargs: Any
     ) -> acp_schema.ConnectMcpResponse:
