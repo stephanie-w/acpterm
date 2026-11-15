@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 import shlex
 import shutil

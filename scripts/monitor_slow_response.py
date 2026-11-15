@@ -22,7 +22,7 @@ Or in ~/.acpterm/config.json:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, UTC
+from datetime import datetime, UTC
 import json
 import os
 from pathlib import Path
