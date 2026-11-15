@@ -692,3 +692,149 @@ def test_transcript_recorder_skips_malformed_context_usage(bad_value: object) ->
         markdown = recorder.to_markdown()
 
         assert "**Context Usage**" not in markdown
+
+
+class _FakeMonotonic:
+    def __init__(self, value: float = 0.0) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+
+def _patch_clock(monkeypatch: pytest.MonkeyPatch, start: float) -> _FakeMonotonic:
+    clock = _FakeMonotonic(start)
+    monkeypatch.setattr("acpterm.transcript.time.monotonic", clock)
+    return clock
+
+
+@pytest.mark.parametrize(
+    "terminal_status", ["completed", "failed", "error", "cancelled"]
+)
+def test_update_tool_call_records_duration_on_terminal_status(
+    terminal_status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _patch_clock(monkeypatch, 100.0)
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("call-1", "Run tests", "execute")
+
+    clock.value = 102.5
+    recorder.update_tool_call("call-1", status=terminal_status)
+
+    assert recorder.tool_calls["call-1"]["duration_seconds"] == 2.5
+
+
+@pytest.mark.parametrize("status", ["pending", "in_progress", "", None, "unknown"])
+def test_update_tool_call_skips_duration_for_non_terminal_status(
+    status: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = _patch_clock(monkeypatch, 5.0)
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("call-1", "Run tests", "execute")
+
+    clock.value = 9.0
+    recorder.update_tool_call("call-1", status=status)
+
+    assert recorder.tool_calls["call-1"]["duration_seconds"] is None
+
+
+def test_update_tool_call_starts_timer_on_first_seen_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _patch_clock(monkeypatch, 10.0)
+    recorder = TranscriptRecorder("prompt")
+
+    recorder.update_tool_call("late", status="in_progress")
+    clock.value = 12.5
+    recorder.update_tool_call("late", status="completed")
+
+    assert recorder.tool_calls["late"]["duration_seconds"] == 2.5
+
+
+def test_update_tool_call_terminal_on_unseen_records_zero_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_clock(monkeypatch, 7.0)
+    recorder = TranscriptRecorder("prompt")
+
+    recorder.update_tool_call("ghost", status="completed")
+
+    assert recorder.tool_calls["ghost"]["duration_seconds"] == 0.0
+
+
+def test_update_tool_call_rounds_duration_to_milliseconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _patch_clock(monkeypatch, 0.0)
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("call-1", "Run tests", "execute")
+
+    clock.value = 1.23456
+    recorder.update_tool_call("call-1", status="completed")
+
+    assert recorder.tool_calls["call-1"]["duration_seconds"] == 1.235
+
+
+def test_tool_call_entry_exposes_only_clean_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _patch_clock(monkeypatch, 1.0)
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("call-1", "Run tests", "execute", raw_input={})
+
+    clock.value = 2.0
+    recorder.update_tool_call("call-1", status="completed")
+
+    assert set(recorder.tool_calls["call-1"]) == {
+        "title",
+        "kind",
+        "status",
+        "content",
+        "raw_input",
+        "raw_output",
+        "duration_seconds",
+    }
+
+
+def test_update_tool_call_records_raw_input_when_provided() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("call-1", "Run tests", "execute", raw_input={})
+
+    recorder.update_tool_call("call-1", raw_input={"command": "ls -la"})
+
+    assert recorder.tool_calls["call-1"]["raw_input"] == {"command": "ls -la"}
+
+
+@pytest.mark.parametrize("empty", [None, {}, "", []])
+def test_update_tool_call_ignores_empty_raw_input(empty: object) -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call(
+        "call-1", "Run tests", "execute", raw_input={"command": "pytest"}
+    )
+
+    recorder.update_tool_call("call-1", raw_input=empty)
+
+    assert recorder.tool_calls["call-1"]["raw_input"] == {"command": "pytest"}
+
+
+@pytest.mark.asyncio
+async def test_session_update_forwards_raw_input_on_tool_call_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_clock(monkeypatch, 3.0)
+    recorder = TranscriptRecorder("prompt")
+    client = AgentClient(silent=True, recorder=recorder)
+    recorder.add_tool_call("call-1", "Run tests", "execute", raw_input={})
+
+    update = SimpleNamespace(
+        session_update="tool_call_update",
+        tool_call_id="call-1",
+        status="completed",
+        raw_input={"command": "ls"},
+    )
+    await client.session_update("session", update)
+
+    entry = recorder.tool_calls["call-1"]
+    assert entry["raw_input"] == {"command": "ls"}
+    assert entry["status"] == "completed"
+    assert entry["duration_seconds"] == 0.0
