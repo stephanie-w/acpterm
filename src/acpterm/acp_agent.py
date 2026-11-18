@@ -178,7 +178,10 @@ class AgentClient:
         agent_binary: str = "opencode",
         permission_hooks: list[HookDefinition] | None = None,
         project_root: Path | None = None,
+        max_read_lines: int | None = 2000,
     ) -> None:
+        if max_read_lines is not None and max_read_lines < 0:
+            raise ValueError("max_read_lines must be non-negative or None")
         self._auto_approve = auto_approve
         self._silent = silent
         self._read_only = read_only
@@ -186,6 +189,7 @@ class AgentClient:
         self._agent_binary = agent_binary
         self._permission_hooks = permission_hooks or []
         self._project_root = project_root or Path.cwd()
+        self._max_read_lines = max_read_lines
 
     def on_connect(self, conn: Any) -> None:
         pass
@@ -402,10 +406,9 @@ class AgentClient:
     ) -> acp_schema.WriteTextFileResponse:
         if self._read_only:
             raise RuntimeError("File modifications are disabled in read-only mode")
-        if not self._silent:
-            file_path = self._project_root / path
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content)
+        file_path = self._project_root / path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
         if self._recorder:
             self._recorder.add_file_operation("write", path)
         return acp_schema.WriteTextFileResponse()
@@ -418,18 +421,35 @@ class AgentClient:
         limit: int | None = None,
         **kwargs: Any,
     ) -> acp_schema.ReadTextFileResponse:
-        if self._silent:
-            return acp_schema.ReadTextFileResponse(content="")
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
         file_path = self._project_root / path
         text = file_path.read_text()
-        lines = text.splitlines()
-        if line is not None:
-            start = line - 1
-            end = start + limit if limit else None
-            lines = lines[start:end]
+        start = max(0, line - 1) if line else 0
+        remaining = text.splitlines()[start:]
+        total = len(remaining)
+
+        truncated = (
+            limit is None
+            and self._max_read_lines is not None
+            and total > self._max_read_lines
+        )
+        if limit is not None:
+            selected = remaining[:limit]
+        elif truncated and self._max_read_lines is not None:
+            selected = remaining[: self._max_read_lines]
+        else:
+            selected = remaining
+
+        content = "\n".join(selected)
+        if truncated and self._max_read_lines is not None:
+            content += (
+                f"\n\n[File truncated: showing {self._max_read_lines} of {total} lines."
+                " Use line and limit parameters to paginate.]"
+            )
         if self._recorder:
             self._recorder.add_file_operation("read", path, line=line, limit=limit)
-        return acp_schema.ReadTextFileResponse(content="\n".join(lines))
+        return acp_schema.ReadTextFileResponse(content=content)
 
     async def create_terminal(
         self,
@@ -551,6 +571,7 @@ class ACPAgent:
         silent: bool = False,
         transcript_recorder: TranscriptRecorder | None = None,
         permission_hooks: list[HookDefinition] | None = None,
+        max_read_lines: int | None = 2000,
     ) -> None:
         self.project_root_path = project_root
         self.agent_binary = agent_binary
@@ -561,6 +582,7 @@ class ACPAgent:
         self._silent = silent
         self._transcript_recorder = transcript_recorder
         self._permission_hooks = permission_hooks or []
+        self._max_read_lines = max_read_lines
 
         self._conn: ClientSideConnection | None = None
         self._process: asyncio.subprocess.Process | None = None
@@ -595,7 +617,7 @@ class ACPAgent:
                     boolean=acp_schema.BooleanConfigOptionCapabilities()
                 )
             ),
-            terminal=True,
+            terminal=False,
             plan=acp_schema.PlanCapabilities(),
             auth=auth_caps,
             field_meta={},
@@ -609,6 +631,7 @@ class ACPAgent:
             agent_binary=self.agent_binary,
             permission_hooks=self._permission_hooks,
             project_root=self.project_root_path,
+            max_read_lines=self._max_read_lines,
         )
         import os
 

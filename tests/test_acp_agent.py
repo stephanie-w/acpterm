@@ -17,6 +17,7 @@ from acpterm.acp_agent import (
     ACPAgent,
     AgentClient,
 )
+from acpterm.cli import _fetch_and_cache_agent_info
 from acpterm.transcript import TranscriptRecorder
 
 
@@ -51,6 +52,158 @@ async def test_write_text_file_creates_parent_directories(tmp_path: Path) -> Non
 
     written = tmp_path / path
     assert written.read_text() == content
+
+
+@pytest.mark.asyncio
+async def test_write_text_file_silent(tmp_path: Path) -> None:
+    client = AgentClient(silent=True, project_root=tmp_path)
+    path = "nested/dir/file.txt"
+
+    await client.write_text_file(session_id="session", path=path, content="kept")
+
+    assert (tmp_path / path).read_text() == "kept"
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_silent(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("alpha\nbeta")
+    client = AgentClient(silent=True, project_root=tmp_path)
+
+    resp = await client.read_text_file(session_id="session", path="notes.txt")
+
+    assert resp.content == "alpha\nbeta"
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_limit_without_line(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("\n".join(str(i) for i in range(1, 11)))
+    client = AgentClient(project_root=tmp_path)
+
+    resp = await client.read_text_file(session_id="session", path="notes.txt", limit=3)
+
+    assert resp.content == "1\n2\n3"
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_windowed_truncation(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("\n".join(["a", "b", "c", "d", "e"]))
+    client = AgentClient(project_root=tmp_path, max_read_lines=3)
+
+    resp = await client.read_text_file(session_id="session", path="notes.txt")
+
+    assert resp.content == (
+        "a\nb\nc"
+        "\n\n[File truncated: showing 3 of 5 lines. "
+        "Use line and limit parameters to paginate.]"
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_under_max_lines(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("a\nb\nc")
+    client = AgentClient(project_root=tmp_path, max_read_lines=5)
+
+    resp = await client.read_text_file(session_id="session", path="notes.txt")
+
+    assert resp.content == "a\nb\nc"
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_unbounded_when_max_lines_none(tmp_path: Path) -> None:
+    content = "\n".join(f"line-{i}" for i in range(5000))
+    (tmp_path / "big.txt").write_text(content)
+    client = AgentClient(project_root=tmp_path, max_read_lines=None)
+
+    resp = await client.read_text_file(session_id="session", path="big.txt")
+
+    assert resp.content == content
+
+
+@pytest.mark.parametrize("max_read_lines", [-1, -2000])
+def test_negative_max_read_lines_rejected(tmp_path: Path, max_read_lines: int) -> None:
+    with pytest.raises(ValueError, match="max_read_lines"):
+        AgentClient(project_root=tmp_path, max_read_lines=max_read_lines)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [-1, -10])
+async def test_read_text_file_rejects_negative_limit(
+    tmp_path: Path, limit: int
+) -> None:
+    (tmp_path / "notes.txt").write_text("a\nb\nc")
+    client = AgentClient(project_root=tmp_path)
+
+    with pytest.raises(ValueError, match="limit"):
+        await client.read_text_file(session_id="session", path="notes.txt", limit=limit)
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_zero_limit_returns_empty(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("a\nb\nc")
+    client = AgentClient(project_root=tmp_path)
+
+    resp = await client.read_text_file(session_id="session", path="notes.txt", limit=0)
+
+    assert resp.content == ""
+
+
+@pytest.mark.asyncio
+async def test_start_advertises_terminal_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _FakeConnection()
+    conn.initialize.return_value = _init_response()
+    conn.new_session.return_value = _session_response("fresh")
+    _install_start_harness(monkeypatch, conn)
+
+    agent = ACPAgent(project_root=tmp_path, silent=True)
+    await agent.start(load_existing=False)
+
+    call = conn.initialize.await_args
+    assert call is not None
+    capabilities = call.kwargs["client_capabilities"]
+    assert capabilities.terminal is False
+
+
+class _FakeCachingConnection:
+    def __init__(self) -> None:
+        self.initialize = AsyncMock()
+        self.new_session = AsyncMock(
+            return_value=SimpleNamespace(session_id=None, config_options=[], modes=None)
+        )
+        self.close_session = AsyncMock()
+        self.close = AsyncMock()
+
+
+class _FakeInfoTransport:
+    async def __aenter__(self) -> tuple[object, object, None]:
+        return object(), object(), None
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_caching_client_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _FakeCachingConnection()
+    monkeypatch.setattr(
+        "acp.client.connection.ClientSideConnection", lambda *_a, **_k: conn
+    )
+    monkeypatch.setattr(
+        "acp.transports.spawn_stdio_transport", lambda *_a, **_k: _FakeInfoTransport()
+    )
+    monkeypatch.setattr(
+        "acpterm.config.resolve_agent_command", lambda _name: ["fake-agent"]
+    )
+    monkeypatch.setattr("acpterm.cli.agent_cache.store", lambda *_a, **_k: None)
+    monkeypatch.setattr("acpterm.cli.asyncio.sleep", AsyncMock())
+
+    await _fetch_and_cache_agent_info("fake-agent")
+
+    call = conn.initialize.await_args
+    assert call is not None
+    capabilities = call.kwargs["client_capabilities"]
+    assert capabilities.terminal is False
 
 
 @pytest.mark.asyncio
