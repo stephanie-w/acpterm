@@ -166,6 +166,11 @@ def _verbose_stream_observer(event: StreamEvent) -> None:
     _console.print("[dim]---[/dim]")
 
 
+def _validate_max_read_lines(max_read_lines: int | None) -> None:
+    if max_read_lines is not None and max_read_lines < 0:
+        raise ValueError("max_read_lines must be non-negative or None")
+
+
 class AgentClient:
     """Implements the ACP `Client` protocol to receive session updates from the agent."""
 
@@ -180,8 +185,7 @@ class AgentClient:
         project_root: Path | None = None,
         max_read_lines: int | None = 2000,
     ) -> None:
-        if max_read_lines is not None and max_read_lines < 0:
-            raise ValueError("max_read_lines must be non-negative or None")
+        _validate_max_read_lines(max_read_lines)
         self._auto_approve = auto_approve
         self._silent = silent
         self._read_only = read_only
@@ -424,23 +428,26 @@ class AgentClient:
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative")
         file_path = self._project_root / path
-        text = file_path.read_text()
         start = max(0, line - 1) if line else 0
-        remaining = text.splitlines()[start:]
-        total = len(remaining)
+        cap = limit if limit is not None else self._max_read_lines
+
+        selected: list[str] = []
+        total = 0
+        with file_path.open(encoding="utf-8") as f:
+            for idx, raw_line in enumerate(f):
+                if idx < start:
+                    continue
+                total += 1
+                if cap is None or len(selected) < cap:
+                    selected.append(raw_line.removesuffix("\n"))
+                elif limit is not None:
+                    break
 
         truncated = (
             limit is None
             and self._max_read_lines is not None
             and total > self._max_read_lines
         )
-        if limit is not None:
-            selected = remaining[:limit]
-        elif truncated and self._max_read_lines is not None:
-            selected = remaining[: self._max_read_lines]
-        else:
-            selected = remaining
-
         content = "\n".join(selected)
         if truncated and self._max_read_lines is not None:
             content += (
@@ -573,6 +580,7 @@ class ACPAgent:
         permission_hooks: list[HookDefinition] | None = None,
         max_read_lines: int | None = 2000,
     ) -> None:
+        _validate_max_read_lines(max_read_lines)
         self.project_root_path = project_root
         self.agent_binary = agent_binary
         self.session_name = session_name

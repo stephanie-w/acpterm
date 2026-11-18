@@ -125,6 +125,34 @@ def test_negative_max_read_lines_rejected(tmp_path: Path, max_read_lines: int) -
         AgentClient(project_root=tmp_path, max_read_lines=max_read_lines)
 
 
+@pytest.mark.parametrize("max_read_lines", [-1, -2000])
+def test_acp_agent_negative_max_read_lines_rejected(
+    tmp_path: Path, max_read_lines: int
+) -> None:
+    with pytest.raises(ValueError, match="max_read_lines"):
+        ACPAgent(project_root=tmp_path, max_read_lines=max_read_lines)
+
+
+@pytest.mark.asyncio
+async def test_read_text_file_empty_and_zero_limit(tmp_path: Path) -> None:
+    (tmp_path / "empty.txt").write_text("")
+    (tmp_path / "trailing.txt").write_text("a\nb\n")
+    client = AgentClient(project_root=tmp_path)
+
+    empty_resp = await client.read_text_file(session_id="session", path="empty.txt")
+    assert empty_resp.content == ""
+
+    zero_resp = await client.read_text_file(
+        session_id="session", path="trailing.txt", limit=0
+    )
+    assert zero_resp.content == ""
+
+    trailing_resp = await client.read_text_file(
+        session_id="session", path="trailing.txt"
+    )
+    assert trailing_resp.content == "a\nb"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("limit", [-1, -10])
 async def test_read_text_file_rejects_negative_limit(
