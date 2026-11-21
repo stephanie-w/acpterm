@@ -11,6 +11,8 @@ from pathlib import Path
 import time
 from typing import Any
 
+from .usage import format_context_usage, format_cost, format_token_breakdown
+
 
 _TERMINAL_TOOL_CALL_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
 
@@ -18,13 +20,6 @@ _TERMINAL_TOOL_CALL_STATUSES = frozenset({"completed", "failed", "error", "cance
 def _is_empty_raw_input(value: Any) -> bool:
     """Return whether a raw input payload carries no data."""
     return value is None or (isinstance(value, (str, list, dict)) and not value)
-
-
-def _token_count(value: Any) -> int | None:
-    """Return a valid non-negative token count, or ``None`` for malformed input."""
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
 
 
 class TranscriptRecorder:
@@ -247,34 +242,18 @@ class TranscriptRecorder:
             if self.duration_seconds is not None:
                 metadata.append(f"- **Duration**: {self.duration_seconds:.2f} seconds")
             if self.usage:
-                total_tokens = _token_count(self.usage.get("total_tokens"))
+                total_tokens, breakdown = format_token_breakdown(self.usage)
                 if total_tokens is not None:
-                    breakdown = []
-                    for key, label in (
-                        ("input_tokens", "input"),
-                        ("output_tokens", "output"),
-                        ("thought_tokens", "thought"),
-                    ):
-                        count = _token_count(self.usage.get(key))
-                        if count is not None:
-                            breakdown.append(f"{label}: {count:,}")
-                    suffix = f" ({', '.join(breakdown)})" if breakdown else ""
+                    suffix = f" ({breakdown})" if breakdown else ""
                     metadata.append(
                         f"- **Token Usage**: {total_tokens:,} tokens{suffix}"
                     )
-                used = _token_count(self.usage.get("used"))
-                size = _token_count(self.usage.get("size"))
-                cost = self.usage.get("cost")
-                if used is not None and size is not None:
-                    pct = (used / size * 100) if size > 0 else 0
-                    metadata.append(
-                        f"- **Context Usage**: {used:,} / {size:,} tokens ({pct:.1f}%)"
-                    )
+                context = format_context_usage(self.usage)
+                if context is not None:
+                    metadata.append(f"- **Context Usage**: {context}")
+                cost = format_cost(self.usage)
                 if cost is not None:
-                    amount = getattr(cost, "amount", None)
-                    currency = getattr(cost, "currency", None)
-                    if amount is not None and currency:
-                        metadata.append(f"- **Cost**: ${amount:.2f} {currency}")
+                    metadata.append(f"- **Cost**: {cost}")
             if metadata:
                 lines.append("## Metadata")
                 lines.extend(metadata)

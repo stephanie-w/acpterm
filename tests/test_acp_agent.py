@@ -710,6 +710,29 @@ async def test_send_prompt_without_recorder_handles_resp_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_prompt_passes_usage_to_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, conn = _agent_with_conn()
+    agent._transcript_recorder = None
+    conn.prompt = AsyncMock(return_value=_prompt_response(usage=_usage_tokens()))
+    format_stop_reason = MagicMock()
+    monkeypatch.setattr("acpterm.acp_agent.format_stop_reason", format_stop_reason)
+
+    await agent.send_prompt("prompt")
+
+    format_stop_reason.assert_called_once_with(
+        "end_turn",
+        usage={
+            "total_tokens": 150,
+            "input_tokens": 100,
+            "output_tokens": 40,
+            "thought_tokens": 10,
+        },
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("prompt", ["hello", ""])
 async def test_send_prompt_builds_text_content_block(prompt: str) -> None:
     agent, conn = _agent_with_conn()
@@ -785,6 +808,17 @@ def test_transcript_recorder_to_markdown_with_token_usage() -> None:
     assert "- **Token Usage**: 150 tokens" in markdown
 
 
+def test_transcript_recorder_derives_token_total_from_breakdown() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.set_usage({"input_tokens": 100, "output_tokens": 40, "thought_tokens": 10})
+
+    markdown = recorder.to_markdown()
+
+    assert "- **Token Usage**: 150 tokens (input: 100, output: 40, thought: 10)" in (
+        markdown
+    )
+
+
 def test_transcript_recorder_merges_usage_without_clobbering_cost() -> None:
     recorder = TranscriptRecorder("prompt")
     cost = SimpleNamespace(amount=0.42, currency="USD")
@@ -832,7 +866,7 @@ def test_transcript_recorder_skips_metadata_for_all_none_usage() -> None:
     "bad_total",
     ["150", 150.5, float("nan"), float("inf"), True, -1],
 )
-def test_transcript_recorder_ignores_malformed_total_tokens(
+def test_transcript_recorder_derives_total_when_total_is_malformed(
     bad_total: object,
 ) -> None:
     recorder = TranscriptRecorder("prompt")
@@ -840,7 +874,7 @@ def test_transcript_recorder_ignores_malformed_total_tokens(
 
     markdown = recorder.to_markdown()
 
-    assert "**Token Usage**" not in markdown
+    assert "- **Token Usage**: 100 tokens (input: 100)" in markdown
 
 
 def test_transcript_recorder_skips_malformed_token_breakdown() -> None:

@@ -6,6 +6,8 @@ from acp import schema as acp_schema
 from rich.console import Console
 from rich.markdown import Markdown
 
+from .usage import format_context_usage, format_cost, format_token_breakdown
+
 
 _console = Console(highlight=False)
 
@@ -284,32 +286,34 @@ def display_initial_session_info(session_response: Any) -> None:
                 _console.print(f"{_tag('model', 'dim')} {model}")
 
 
-def format_stop_reason(stop_reason: str) -> None:
+def format_stop_reason(stop_reason: str, usage: dict[str, Any] | None = None) -> None:
     _state.end_stream()
     _state.flush_md()
-    _print_usage()
+    _print_usage(usage=usage)
     _console.print(f"{_tag('done', 'dim')} {stop_reason}")
 
 
-def _print_usage() -> None:
-    if _state._usage is None:
-        return
-    usage = _state._usage
-    used = usage.get("used")
-    size = usage.get("size")
-    cost = usage.get("cost")
+def _print_usage(usage: dict[str, Any] | None = None) -> None:
+    session_usage = _state._usage
+    _state._usage = None
+
+    merged: dict[str, Any] = dict(session_usage or {})
+    if usage:
+        merged.update(usage)
+
+    total_tokens, breakdown = format_token_breakdown(merged)
 
     lines: list[str] = []
-    if used is not None and size is not None:
-        pct = (used / size * 100) if size > 0 else 0
-        lines.append(
-            f"{_tag('context', 'dim')} {used:,} / {size:,} tokens ({pct:.1f}%)"
-        )
+    if total_tokens is not None:
+        suffix = f" ({breakdown})" if breakdown else ""
+        lines.append(f"{_tag('tokens', 'dim')} {total_tokens:,} tokens{suffix}")
+
+    context = format_context_usage(merged)
+    if context is not None:
+        lines.append(f"{_tag('context', 'dim')} {context}")
+    cost = format_cost(merged)
     if cost is not None:
-        amount = getattr(cost, "amount", None)
-        currency = getattr(cost, "currency", None)
-        if amount is not None and currency:
-            lines.append(f"{_tag('cost', 'dim')} ${amount:.2f} {currency}")
+        lines.append(f"{_tag('cost', 'dim')} {cost}")
 
     if lines:
         _console.print()
