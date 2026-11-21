@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from acp import schema as acp_schema
 from rich.console import Console
@@ -13,6 +13,37 @@ from .usage import format_context_usage, format_cost, format_token_breakdown
 _console = Console(highlight=False)
 
 CONTENT_TRUNCATE_LEN = 300
+
+SessionUpdate = (
+    acp_schema.UserMessageChunk
+    | acp_schema.AgentMessageChunk
+    | acp_schema.AgentThoughtChunk
+    | acp_schema.ToolCallStart
+    | acp_schema.ToolCallProgress
+    | acp_schema.AgentPlanUpdate
+    | acp_schema.AgentPlanContentUpdate
+    | acp_schema.AgentPlanRemovedUpdate
+    | acp_schema.AvailableCommandsUpdate
+    | acp_schema.CurrentModeUpdate
+    | acp_schema.ConfigOptionUpdate
+    | acp_schema.SessionInfoUpdate
+    | acp_schema.UsageUpdate
+    | acp_schema.SessionUpdateNotice
+    | acp_schema.SessionUpdateCompactionUpdate
+    | acp_schema.SessionUpdateCompactionSummaryChunk
+)
+
+SessionResponse = (
+    acp_schema.NewSessionResponse
+    | acp_schema.LoadSessionResponse
+    | acp_schema.ResumeSessionResponse
+)
+
+ToolContentBlock = (
+    acp_schema.ContentToolCallContent
+    | acp_schema.FileEditToolCallContent
+    | acp_schema.TerminalToolCallContent
+)
 
 _PLAN_STATUS_ICONS: dict[str, str] = {
     "pending": "○",
@@ -95,16 +126,13 @@ def _extract_text(content: Any) -> str:
     return ""
 
 
-def _format_content_blocks(content_blocks: list[Any]) -> str:
+def _format_content_blocks(content_blocks: list[ToolContentBlock]) -> str:
     parts: list[str] = []
     for block in content_blocks:
-        # Handle terminal content references (type="terminal", terminalId=...)
-        block_type = getattr(block, "type", None)
-        if block_type == "terminal":
-            terminal_id = getattr(block, "terminal_id", None) or getattr(
-                block, "terminalId", None
-            )
-            parts.append(f"[terminal {terminal_id or 'unknown'}]")
+        # Handle terminal content references (type="terminal", terminal_id=...)
+        if block.type == "terminal":
+            terminal_id = block.terminal_id
+            parts.append(_tag(f"terminal {terminal_id or 'unknown'}"))
             continue
 
         if hasattr(block, "content"):
@@ -125,16 +153,12 @@ def _format_content_blocks(content_blocks: list[Any]) -> str:
 
 def format_session_update(
     session_id: str,
-    update: Any,
+    update: SessionUpdate,
 ) -> None:
-    session_update = getattr(update, "session_update", None) or getattr(
-        update, "sessionUpdate", None
-    )
+    session_update = update.session_update
 
     if session_update == "agent_thought_chunk":
-        msg_id: str | None = getattr(update, "message_id", None) or getattr(
-            update, "messageId", None
-        )
+        msg_id = cast(acp_schema.AgentThoughtChunk, update).message_id
         text = _extract_text(update)
         if not text:
             return
@@ -149,9 +173,7 @@ def format_session_update(
 
     elif session_update == "agent_message_chunk":
         _state.end_stream()
-        msg_id: str | None = getattr(update, "message_id", None) or getattr(
-            update, "messageId", None
-        )
+        msg_id = cast(acp_schema.AgentMessageChunk, update).message_id
         text = _extract_text(update)
         if text:
             _state.buffer_md(msg_id, text)
@@ -159,14 +181,12 @@ def format_session_update(
     elif session_update == "tool_call":
         _state.end_stream()
         _state.flush_md()
-        title = getattr(update, "title", "Unknown tool") or "Unknown tool"
-        name = getattr(update, "name", None)
-        kind = getattr(update, "kind", None)
-        if kind is not None:
-            _state.tool_kind = kind.value if hasattr(kind, "value") else str(kind)
-        else:
-            _state.tool_kind = None
-        status = getattr(update, "status", "pending") or "pending"
+        tool_call = cast(acp_schema.ToolCallStart, update)
+        title = tool_call.title or "Unknown tool"
+        name = tool_call.name
+        kind = tool_call.kind
+        _state.tool_kind = kind
+        status = tool_call.status or "pending"
         name_suffix = f" {_tag(name)}" if name else ""
         _console.print(
             f"{_tag('tool' if _state.tool_kind is None else _state.tool_kind, 'yellow')} {escape(title)}{name_suffix} ({status})"
@@ -175,13 +195,13 @@ def format_session_update(
     elif session_update == "tool_call_update":
         _state.end_stream()
         _state.flush_md()
-        status = getattr(update, "status", None)
-        title = getattr(update, "title", None)
-        name = getattr(update, "name", None)
-        kind = getattr(update, "kind", None)
-        if kind is not None:
-            _state.tool_kind = kind.value if hasattr(kind, "value") else str(kind)
-        content = getattr(update, "content", None)
+        tool_call = cast(acp_schema.ToolCallProgress, update)
+        status = tool_call.status
+        title = tool_call.title
+        name = tool_call.name
+        kind = tool_call.kind
+        _state.tool_kind = kind
+        content = tool_call.content
 
         parts: list[str] = []
         if title:
@@ -202,30 +222,25 @@ def format_session_update(
                 _console.print(indented)
 
     elif session_update == "usage_update":
-        used = getattr(update, "used", None)
-        size = getattr(update, "size", None)
-        cost = getattr(update, "cost", None)
+        usage = cast(acp_schema.UsageUpdate, update)
+        used = usage.used
+        size = usage.size
+        cost = usage.cost
         _state._usage = {"used": used, "size": size, "cost": cost}
 
     elif session_update == "current_mode_update":
-        current_mode_id = getattr(update, "current_mode_id", None) or getattr(
-            update, "currentModeId", None
-        )
+        current_mode_id = cast(acp_schema.CurrentModeUpdate, update).current_mode_id
         if current_mode_id and not _state._mode_displayed:
             _state._mode_displayed = True
             _console.print(f"{_tag('mode', 'dim')} {current_mode_id}")
 
     elif session_update == "config_option_update":
         if not _state._model_displayed:
-            config_options = getattr(update, "config_options", None) or getattr(
-                update, "configOptions", None
-            )
+            config_options = cast(acp_schema.ConfigOptionUpdate, update).config_options
             if config_options:
                 for opt in config_options:
-                    if getattr(opt, "id", None) == "model":
-                        model = getattr(opt, "current_value", None) or getattr(
-                            opt, "currentValue", None
-                        )
+                    if opt.id == "model":
+                        model = opt.current_value
                         if model:
                             _state._model_displayed = True
                             _console.print(f"{_tag('model', 'dim')} {model}")
@@ -234,13 +249,13 @@ def format_session_update(
     elif session_update == "plan":
         _state.end_stream()
         _state.flush_md()
-        entries = getattr(update, "entries", None) or []
+        entries = cast(acp_schema.AgentPlanUpdate, update).entries or []
         if entries:
             _console.print(f"\n{_tag('plan', 'bold cyan')}")
             for entry in entries:
-                content = getattr(entry, "content", "")
-                priority = getattr(entry, "priority", "medium")
-                status = getattr(entry, "status", "pending")
+                content = entry.content
+                priority = entry.priority
+                status = entry.status
 
                 icon = _PLAN_STATUS_ICONS.get(status, "○")
                 style = _PLAN_STATUS_STYLES.get(status, "")
@@ -254,35 +269,29 @@ def format_session_update(
                 _console.print(f"  [{style}]{icon}[/{style}] {content}{priority_tag}")
 
 
-def display_initial_session_info(session_response: Any) -> None:
+def display_initial_session_info(session_response: SessionResponse) -> None:
     """Print initial model and mode information from the session load/new response."""
     # Print mode if present
-    current_mode_id = getattr(session_response, "current_mode_id", None) or getattr(
-        session_response, "currentModeId", None
+    current_mode_id = (
+        session_response.modes.current_mode_id if session_response.modes else None
     )
     if current_mode_id and not _state._mode_displayed:
         _state._mode_displayed = True
         _console.print(f"{_tag('mode', 'dim')} {current_mode_id}")
 
-    # Print model if present in configOptions
-    config_options = getattr(session_response, "config_options", None) or getattr(
-        session_response, "configOptions", None
-    )
+    # Print model if present in config_options
+    config_options = session_response.config_options
     if config_options:
         for opt in config_options:
-            if getattr(opt, "id", None) == "model":
-                model = getattr(opt, "current_value", None) or getattr(
-                    opt, "currentValue", None
-                )
+            if opt.id == "model":
+                model = opt.current_value
                 if model and not _state._model_displayed:
                     _state._model_displayed = True
                     _console.print(f"{_tag('model', 'dim')} {model}")
                 break
 
     # Support metadata fallback for opencode
-    meta = getattr(session_response, "_meta", None) or getattr(
-        session_response, "meta", None
-    )
+    meta = session_response.field_meta
     if meta and isinstance(meta, dict):
         opencode = meta.get("opencode")
         if isinstance(opencode, dict):

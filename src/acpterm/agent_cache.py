@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from acp import schema as acp_schema
+
 
 CACHE_FILE = Path.home() / ".acpterm" / "agent_cache.json"
 CACHE_TTL = timedelta(days=7)
@@ -57,11 +59,16 @@ def get_commands(agent_name: str) -> list[dict[str, str]] | None:
     return entry.get("commands")
 
 
+ConfigOption = (
+    acp_schema.SessionConfigOptionSelect | acp_schema.SessionConfigOptionBoolean
+)
+
+
 def store(
     agent_name: str,
-    config_options: Any = None,
-    modes: Any = None,
-    commands: Any = None,
+    config_options: list[ConfigOption] | None = None,
+    modes: acp_schema.SessionModeState | None = None,
+    commands: list[acp_schema.AvailableCommand] | None = None,
 ) -> None:
     data = _read()
     existing = data.get(agent_name, {})
@@ -70,47 +77,41 @@ def store(
     if config_options is not None:
         co_list = []
         for opt in config_options:
-            val = getattr(opt, "current_value", None)
-            if val is None:
-                val = getattr(opt, "currentValue", None)
             co_list.append(
                 {
-                    "id": getattr(opt, "id", None),
-                    "name": getattr(opt, "name", None),
-                    "type": getattr(opt, "type", None),
-                    "current_value": val,
+                    "id": opt.id,
+                    "name": opt.name,
+                    "type": opt.type,
+                    "current_value": opt.current_value,
                     "options": _serialize_select_options(opt),
                 }
             )
 
     mode_dict: dict[str, Any] | None = existing.get("modes")
     if modes is not None:
-        current = getattr(modes, "current_mode_id", None) or getattr(
-            modes, "currentModeId", None
-        )
-        available = getattr(modes, "available_modes", None) or getattr(
-            modes, "availableModes", None
-        )
         available_list: list[dict[str, str | None]] = []
-        if available:
-            for m in available:
+        if modes.available_modes:
+            for m in modes.available_modes:
                 available_list.append(
                     {
-                        "id": getattr(m, "id", None),
-                        "name": getattr(m, "name", None),
-                        "description": getattr(m, "description", None),
+                        "id": m.id,
+                        "name": m.name,
+                        "description": m.description,
                     }
                 )
-        mode_dict = {"current_mode_id": current, "available_modes": available_list}
+        mode_dict = {
+            "current_mode_id": modes.current_mode_id,
+            "available_modes": available_list,
+        }
 
     cmd_list: list[dict[str, str]] = existing.get("commands", [])
     if commands is not None:
         cmd_list = []
         for cmd in commands:
-            name = getattr(cmd, "name", None)
-            desc = getattr(cmd, "description", None)
-            if name:
-                cmd_list.append({"name": name, "description": desc or ""})
+            if cmd.name:
+                cmd_list.append(
+                    {"name": cmd.name, "description": cmd.description or ""}
+                )
 
     data[agent_name] = {
         "config_options": co_list,
@@ -145,7 +146,9 @@ def update_mode(agent_name: str, mode_id: str) -> None:
             _write(data)
 
 
-def update_commands(agent_name: str, commands: Any) -> None:
+def update_commands(
+    agent_name: str, commands: list[acp_schema.AvailableCommand] | None
+) -> None:
     """Update the cached commands list for an agent."""
     data = _read()
     entry = data.get(agent_name)
@@ -153,34 +156,24 @@ def update_commands(agent_name: str, commands: Any) -> None:
         cmd_list: list[dict[str, str]] = []
         if commands:
             for cmd in commands:
-                name = getattr(cmd, "name", None)
-                desc = getattr(cmd, "description", None)
-                if name:
-                    cmd_list.append({"name": name, "description": desc or ""})
+                if cmd.name:
+                    cmd_list.append(
+                        {"name": cmd.name, "description": cmd.description or ""}
+                    )
         entry["commands"] = cmd_list
         _write(data)
 
 
-def _serialize_select_options(opt: Any) -> list[dict[str, str]]:
-    options = getattr(opt, "options", None)
-    if not options:
+def _serialize_select_options(opt: ConfigOption) -> list[dict[str, str]]:
+    if not isinstance(opt, acp_schema.SessionConfigOptionSelect):
         return []
     result: list[dict[str, str]] = []
-    for item in options:
-        item_id = getattr(item, "id", None)
-        item_name = getattr(item, "name", None)
-        if item_id:
-            result.append({"id": item_id, "name": item_name or item_id})
-        else:
-            opts = getattr(item, "options", None)
-            if opts:
-                for sub in opts:
-                    sub_id = getattr(sub, "id", None)
-                    if sub_id:
-                        result.append(
-                            {
-                                "id": sub_id,
-                                "name": getattr(sub, "label", None) or sub_id,
-                            }
-                        )
+    for item in opt.options:
+        if isinstance(item, acp_schema.SessionConfigSelectOption):
+            if item.value:
+                result.append({"id": item.value, "name": item.name or item.value})
+        elif isinstance(item, acp_schema.SessionConfigSelectGroup):
+            for sub in item.options:
+                if sub.value:
+                    result.append({"id": sub.value, "name": sub.name or sub.value})
     return result
