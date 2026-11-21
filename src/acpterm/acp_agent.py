@@ -224,6 +224,7 @@ class AgentClient:
                     self._recorder.add_message(text)
             elif session_update == "tool_call":
                 title = getattr(update, "title", "Unknown tool") or "Unknown tool"
+                name = getattr(update, "name", None)
                 kind = getattr(update, "kind", None)
                 kind_str = getattr(kind, "value", str(kind)) if kind else "other"
                 tool_call_id = (
@@ -235,11 +236,12 @@ class AgentClient:
                     update, "rawInput", None
                 )
                 self._recorder.add_tool_call(
-                    tool_call_id, title, kind_str, raw_input=raw_input
+                    tool_call_id, title, kind_str, raw_input=raw_input, name=name
                 )
             elif session_update == "tool_call_update":
                 status = getattr(update, "status", None)
                 title = getattr(update, "title", None)
+                name = getattr(update, "name", None)
                 kind = getattr(update, "kind", None)
                 kind_str = getattr(kind, "value", str(kind)) if kind else None
                 content = getattr(update, "content", None)
@@ -265,6 +267,7 @@ class AgentClient:
                     content_str,
                     raw_output=raw_output,
                     raw_input=raw_input,
+                    name=name,
                 )
             elif session_update == "usage_update":
                 used = getattr(update, "used", None)
@@ -317,6 +320,7 @@ class AgentClient:
         **kwargs: Any,
     ) -> acp_schema.RequestPermissionResponse:
         title = getattr(tool_call, "title", "unknown") or "unknown"
+        name = getattr(tool_call, "name", None)
         kind = getattr(tool_call, "kind", None)
         kind_str = getattr(kind, "value", str(kind)) if kind else "unknown"
         target_path = getattr(tool_call, "path", None) or getattr(
@@ -324,7 +328,11 @@ class AgentClient:
         )
 
         if not self._silent:
-            _console.print(f"\n[yellow][perm][/yellow] {title} [dim]({kind_str})[/dim]")
+            name_suffix = f" \\[{name}]" if name else ""
+            _console.print(
+                f"\n[yellow][perm][/yellow] {title}{name_suffix} "
+                f"[dim]({kind_str})[/dim]"
+            )
 
         # In read-only mode, auto-approve non-mutating reads without prompting.
         if self._read_only and kind_str in _READ_ONLY_SAFE_KINDS:
@@ -352,6 +360,7 @@ class AgentClient:
                 extra={
                     "title": title,
                     "kind": kind_str,
+                    "name": name,
                     "path": str(target_path) if target_path else "",
                 },
             )

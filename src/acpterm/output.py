@@ -159,14 +159,16 @@ def format_session_update(
         _state.end_stream()
         _state.flush_md()
         title = getattr(update, "title", "Unknown tool") or "Unknown tool"
+        name = getattr(update, "name", None)
         kind = getattr(update, "kind", None)
         if kind is not None:
             _state.tool_kind = kind.value if hasattr(kind, "value") else str(kind)
         else:
             _state.tool_kind = None
         status = getattr(update, "status", "pending") or "pending"
+        name_suffix = f" {_tag(name)}" if name else ""
         _console.print(
-            f"{_tag('tool' if _state.tool_kind is None else _state.tool_kind, 'yellow')} {title} ({status})"
+            f"{_tag('tool' if _state.tool_kind is None else _state.tool_kind, 'yellow')} {title}{name_suffix} ({status})"
         )
 
     elif session_update == "tool_call_update":
@@ -174,6 +176,7 @@ def format_session_update(
         _state.flush_md()
         status = getattr(update, "status", None)
         title = getattr(update, "title", None)
+        name = getattr(update, "name", None)
         kind = getattr(update, "kind", None)
         if kind is not None:
             _state.tool_kind = kind.value if hasattr(kind, "value") else str(kind)
@@ -182,6 +185,8 @@ def format_session_update(
         parts: list[str] = []
         if title:
             parts.append(title)
+        if name:
+            parts.append(_tag(name))
         if status:
             parts.append(f"({status})")
         header = " ".join(parts)
