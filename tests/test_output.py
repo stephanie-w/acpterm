@@ -291,6 +291,25 @@ def test_display_initial_session_info_reads_field_meta_model_fallback(
     assert "[model] opencode-default" in rendered.getvalue()
 
 
+def test_display_initial_session_info_escapes_rich_markup(rendered: StringIO) -> None:
+    response = acp_schema.NewSessionResponse(
+        session_id="session-1",
+        modes=acp_schema.SessionModeState(
+            current_mode_id="[red]build[/red]",
+            available_modes=[
+                acp_schema.SessionMode(id="[red]build[/red]", name="Build")
+            ],
+        ),
+        field_meta={"opencode": {"modelId": "gpt-5[beta]"}},
+    )
+
+    output.display_initial_session_info(response)
+
+    text = rendered.getvalue()
+    assert "[mode] [red]build[/red]" in text
+    assert "[model] gpt-5[beta]" in text
+
+
 def test_format_stop_reason_ignores_only_malformed_tokens(rendered: StringIO) -> None:
     output.format_stop_reason(
         "end_turn",

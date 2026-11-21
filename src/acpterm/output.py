@@ -232,7 +232,7 @@ def format_session_update(
         current_mode_id = cast(acp_schema.CurrentModeUpdate, update).current_mode_id
         if current_mode_id and not _state._mode_displayed:
             _state._mode_displayed = True
-            _console.print(f"{_tag('mode', 'dim')} {current_mode_id}")
+            _console.print(f"{_tag('mode', 'dim')} {escape(current_mode_id)}")
 
     elif session_update == "config_option_update":
         if not _state._model_displayed:
@@ -243,7 +243,9 @@ def format_session_update(
                         model = opt.current_value
                         if model:
                             _state._model_displayed = True
-                            _console.print(f"{_tag('model', 'dim')} {model}")
+                            _console.print(
+                                f"{_tag('model', 'dim')} {escape(str(model))}"
+                            )
                         break
 
     elif session_update == "plan":
@@ -277,7 +279,7 @@ def display_initial_session_info(session_response: SessionResponse) -> None:
     )
     if current_mode_id and not _state._mode_displayed:
         _state._mode_displayed = True
-        _console.print(f"{_tag('mode', 'dim')} {current_mode_id}")
+        _console.print(f"{_tag('mode', 'dim')} {escape(current_mode_id)}")
 
     # Print model if present in config_options
     config_options = session_response.config_options
@@ -287,7 +289,7 @@ def display_initial_session_info(session_response: SessionResponse) -> None:
                 model = opt.current_value
                 if model and not _state._model_displayed:
                     _state._model_displayed = True
-                    _console.print(f"{_tag('model', 'dim')} {model}")
+                    _console.print(f"{_tag('model', 'dim')} {escape(str(model))}")
                 break
 
     # Support metadata fallback for opencode
@@ -298,7 +300,7 @@ def display_initial_session_info(session_response: SessionResponse) -> None:
             model = opencode.get("modelId") or opencode.get("model_id")
             if model and not _state._model_displayed:
                 _state._model_displayed = True
-                _console.print(f"{_tag('model', 'dim')} {model}")
+                _console.print(f"{_tag('model', 'dim')} {escape(str(model))}")
 
 
 def format_stop_reason(stop_reason: str, usage: dict[str, Any] | None = None) -> None:
