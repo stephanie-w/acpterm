@@ -11,6 +11,7 @@ import typer
 
 from . import agent_cache, session_store
 from .acp_agent import ACPAgent, AgentClient
+from .output import SessionUpdate
 
 
 app = typer.Typer(name="acpterm", no_args_is_help=True)
@@ -322,16 +323,11 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
         async def session_update(
             self,
             session_id: str,
-            update: Any,
+            update: SessionUpdate,
             **kwargs: Any,
         ) -> None:
-            session_update = getattr(update, "session_update", None) or getattr(
-                update, "sessionUpdate", None
-            )
-            if session_update == "available_commands_update":
-                cmds = getattr(update, "available_commands", None) or getattr(
-                    update, "availableCommands", None
-                )
+            if update.session_update == "available_commands_update":
+                cmds = update.available_commands
                 if cmds:
                     commands_received.extend(cmds)
 
@@ -369,12 +365,10 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
             _console.print("[dim]--- new_session response ---[/dim]")
             _console.print(json.dumps(resp.model_dump(mode="json"), indent=2))
             _console.print("[dim]---[/dim]")
-        co = getattr(resp, "config_options", None) or getattr(
-            resp, "configOptions", None
-        )
-        modes = getattr(resp, "modes", None)
+        co = resp.config_options
+        modes = resp.modes
         agent_cache.store(agent_binary, co, modes, commands_received)
-        sid = getattr(resp, "session_id", None) or getattr(resp, "sessionId", None)
+        sid = resp.session_id
         if sid:
             with contextlib.suppress(Exception):
                 await conn.close_session(session_id=sid)

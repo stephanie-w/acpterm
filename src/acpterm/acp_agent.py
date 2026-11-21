@@ -5,7 +5,7 @@ import contextlib
 from contextlib import AbstractAsyncContextManager
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 import warnings
 
 from acp import schema as acp_schema
@@ -25,6 +25,9 @@ from .output import (
     display_initial_session_info,
     format_session_update,
     format_stop_reason,
+    SessionResponse,
+    SessionUpdate,
+    ToolContentBlock,
 )
 from .session_store import get as get_saved_session
 from .transcript import TranscriptRecorder
@@ -47,57 +50,40 @@ logger = logging.getLogger(__name__)
 _READ_ONLY_SAFE_KINDS: frozenset[str] = frozenset({"read"})
 
 
-def _agent_capabilities(init_resp: Any) -> Any:
-    """Read agent capabilities from an initialize response in either naming style."""
+def _agent_capabilities(
+    init_resp: acp_schema.InitializeResponse | None,
+) -> acp_schema.AgentCapabilities | None:
+    """Read agent capabilities from an initialize response."""
     if init_resp is None:
         return None
-    return getattr(init_resp, "agent_capabilities", None) or getattr(
-        init_resp, "agentCapabilities", None
-    )
+    return init_resp.agent_capabilities
 
 
-def _supports_resume(init_resp: Any) -> bool:
+def _supports_resume(init_resp: acp_schema.InitializeResponse | None) -> bool:
     """Return whether the agent advertises support for ``session/resume``."""
     agent_caps = _agent_capabilities(init_resp)
     if agent_caps is None:
         return False
-    session_caps = getattr(agent_caps, "session_capabilities", None) or getattr(
-        agent_caps, "sessionCapabilities", None
-    )
-    return (
-        session_caps is not None and getattr(session_caps, "resume", None) is not None
-    )
+    session_caps = agent_caps.session_capabilities
+    return session_caps is not None and session_caps.resume is not None
 
 
-def _supports_load_session(init_resp: Any) -> bool:
+def _supports_load_session(init_resp: acp_schema.InitializeResponse | None) -> bool:
     """Return whether the agent advertises support for ``session/load``."""
     agent_caps = _agent_capabilities(init_resp)
     if agent_caps is None:
         return False
-    return bool(
-        getattr(agent_caps, "load_session", None)
-        or getattr(agent_caps, "loadSession", None)
-    )
+    return bool(agent_caps.load_session)
 
 
-def _has_model_config_option(session_resp: Any) -> bool:
+def _has_model_config_option(session_resp: SessionResponse | None) -> bool:
     """Return whether the session handshake exposes a ``model`` config option."""
     if session_resp is None:
         return False
-    config_options = getattr(session_resp, "config_options", None) or getattr(
-        session_resp, "configOptions", None
-    )
+    config_options = session_resp.config_options
     if not config_options:
         return False
-    for option in config_options:
-        option_id = (
-            option.get("id")
-            if isinstance(option, dict)
-            else getattr(option, "id", None)
-        )
-        if option_id == "model":
-            return True
-    return False
+    return any(option.id == "model" for option in config_options)
 
 
 def _is_method_not_found(exc: BaseException) -> bool:
@@ -151,6 +137,7 @@ def _verbose_stream_observer(event: StreamEvent) -> None:
     if is_notification and method == "session/update":
         params = msg.get("params", {})
         update = params.get("update", params)
+        # Raw JSON-RPC notifications use the camelCase wire key before decoding.
         update_type = (
             update.get("sessionUpdate", "?") if isinstance(update, dict) else "?"
         )
@@ -203,7 +190,7 @@ class AgentClient:
     async def session_update(
         self,
         session_id: str,
-        update: Any,
+        update: SessionUpdate,
         **kwargs: Any,
     ) -> None:
         if not self._silent:
@@ -212,9 +199,7 @@ class AgentClient:
         if self._recorder:
             from .output import _extract_text, _format_content_blocks
 
-            session_update = getattr(update, "session_update", None) or getattr(
-                update, "sessionUpdate", None
-            )
+            session_update = update.session_update
 
             if session_update == "agent_thought_chunk":
                 text = _extract_text(update)
@@ -225,40 +210,26 @@ class AgentClient:
                 if text:
                     self._recorder.add_message(text)
             elif session_update == "tool_call":
-                title = getattr(update, "title", "Unknown tool") or "Unknown tool"
-                name = getattr(update, "name", None)
-                kind = getattr(update, "kind", None)
-                kind_str = getattr(kind, "value", str(kind)) if kind else "other"
-                tool_call_id = (
-                    getattr(update, "tool_call_id", None)
-                    or getattr(update, "toolCallId", None)
-                    or "call_default"
-                )
-                raw_input = getattr(update, "raw_input", None) or getattr(
-                    update, "rawInput", None
-                )
+                tool_call = cast(acp_schema.ToolCallStart, update)
+                title = tool_call.title or "Unknown tool"
+                name = tool_call.name
+                kind_str = tool_call.kind or "other"
+                tool_call_id = tool_call.tool_call_id or "call_default"
+                raw_input = tool_call.raw_input or None
                 self._recorder.add_tool_call(
                     tool_call_id, title, kind_str, raw_input=raw_input, name=name
                 )
             elif session_update == "tool_call_update":
-                status = getattr(update, "status", None)
-                title = getattr(update, "title", None)
-                name = getattr(update, "name", None)
-                kind = getattr(update, "kind", None)
-                kind_str = getattr(kind, "value", str(kind)) if kind else None
-                content = getattr(update, "content", None)
-                tool_call_id = (
-                    getattr(update, "tool_call_id", None)
-                    or getattr(update, "toolCallId", None)
-                    or "call_default"
-                )
+                tool_call = cast(acp_schema.ToolCallProgress, update)
+                status = tool_call.status
+                title = tool_call.title
+                name = tool_call.name
+                kind_str = tool_call.kind
+                content = tool_call.content
+                tool_call_id = tool_call.tool_call_id or "call_default"
                 content_str = _format_content_blocks(content) if content else None
-                raw_output = getattr(update, "raw_output", None) or getattr(
-                    update, "rawOutput", None
-                )
-                raw_input = getattr(update, "raw_input", None) or getattr(
-                    update, "rawInput", None
-                )
+                raw_output = tool_call.raw_output or None
+                raw_input = tool_call.raw_input or None
                 # Extract diff paths from content blocks for richer transcript
                 if content:
                     self._record_diff_paths(content)
@@ -272,37 +243,35 @@ class AgentClient:
                     name=name,
                 )
             elif session_update == "usage_update":
-                used = getattr(update, "used", None)
-                size = getattr(update, "size", None)
-                cost = getattr(update, "cost", None)
+                usage = cast(acp_schema.UsageUpdate, update)
+                used = usage.used
+                size = usage.size
+                cost = usage.cost
                 self._recorder.set_usage({"used": used, "size": size, "cost": cost})
             elif session_update == "plan":
-                entries = getattr(update, "entries", None) or []
+                entries = cast(acp_schema.AgentPlanUpdate, update).entries
                 self._recorder.set_plan(entries)
             elif session_update == "available_commands_update":
-                cmds = getattr(update, "available_commands", None) or getattr(
-                    update, "availableCommands", None
-                )
+                cmds = cast(
+                    acp_schema.AvailableCommandsUpdate, update
+                ).available_commands
                 if cmds:
                     from . import agent_cache
 
                     with contextlib.suppress(Exception):
                         agent_cache.update_commands(self._agent_binary, cmds)
 
-    def _record_diff_paths(self, content_blocks: list[Any]) -> None:
+    def _record_diff_paths(self, content_blocks: list[ToolContentBlock]) -> None:
         """Extract file paths from diff content blocks and record as file operations."""
         if not self._recorder:
             return
         for block in content_blocks:
-            block_type = getattr(block, "type", None)
-            if block_type != "diff":
+            if block.type != "diff":
                 continue
             # v1: path field directly on the diff block
-            diff_path = getattr(block, "path", None)
+            diff_path = block.path
             if diff_path:
-                old_text = getattr(block, "old_text", None) or getattr(
-                    block, "oldText", None
-                )
+                old_text = block.old_text
                 op = "create" if old_text is None else "modify"
                 self._recorder.add_file_operation(op, diff_path)
             # v2: changes[] array with structured operations
@@ -739,10 +708,8 @@ class ACPAgent:
         if session_resp:
             from . import agent_cache
 
-            co = getattr(session_resp, "config_options", None) or getattr(
-                session_resp, "configOptions", None
-            )
-            modes = getattr(session_resp, "modes", None)
+            co = session_resp.config_options
+            modes = session_resp.modes
             with contextlib.suppress(Exception):
                 agent_cache.store(self.agent_binary, config_options=co, modes=modes)
 

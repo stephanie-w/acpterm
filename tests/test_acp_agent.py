@@ -365,8 +365,8 @@ def _init_response(
     )
 
 
-def _session_response(session_id: str = "new-session") -> SimpleNamespace:
-    return SimpleNamespace(session_id=session_id, config_options=[])
+def _session_response(session_id: str = "new-session") -> acp_schema.NewSessionResponse:
+    return acp_schema.NewSessionResponse(session_id=session_id, config_options=[])
 
 
 def _agent_with_conn() -> tuple[ACPAgent, _FakeConnection]:
@@ -377,6 +377,20 @@ def _agent_with_conn() -> tuple[ACPAgent, _FakeConnection]:
     return agent, conn
 
 
+def _select_option(
+    option_id: str,
+    *,
+    current_value: str = "",
+    options: list[acp_schema.SessionConfigSelectOption] | None = None,
+) -> acp_schema.SessionConfigOptionSelect:
+    return acp_schema.SessionConfigOptionSelect(
+        id=option_id,
+        name=option_id.title(),
+        current_value=current_value,
+        options=options or [],
+    )
+
+
 def test_supports_resume_reads_session_capabilities() -> None:
     assert _supports_resume(_init_response()) is False
     assert (
@@ -385,56 +399,100 @@ def test_supports_resume_reads_session_capabilities() -> None:
     )
     assert (
         _supports_resume(
-            SimpleNamespace(
-                agent_capabilities=SimpleNamespace(
-                    session_capabilities=SimpleNamespace(resume={})
-                )
+            acp_schema.InitializeResponse(
+                protocol_version=1,
+                agent_capabilities=acp_schema.AgentCapabilities(
+                    session_capabilities=acp_schema.SessionCapabilities(
+                        resume=acp_schema.SessionResumeCapabilities()
+                    )
+                ),
             )
         )
         is True
     )
-    assert _supports_resume(SimpleNamespace()) is False
+    assert _supports_resume(None) is False
 
 
 def test_supports_load_session_reads_agent_capabilities() -> None:
     assert _supports_load_session(_init_response()) is False
     assert _supports_load_session(_init_response(load_session=True)) is True
     assert _supports_load_session(_init_response(load_session=False)) is False
-    assert (
-        _supports_load_session(
-            SimpleNamespace(agentCapabilities=SimpleNamespace(loadSession=True))
-        )
-        is True
-    )
-    assert _supports_load_session(SimpleNamespace()) is False
+    assert _supports_load_session(None) is False
 
 
 def test_has_model_config_option_detects_model_entry() -> None:
     assert _has_model_config_option(None) is False
-    assert _has_model_config_option(SimpleNamespace(config_options=[])) is False
+    assert (
+        _has_model_config_option(acp_schema.NewSessionResponse(session_id="session"))
+        is False
+    )
     assert (
         _has_model_config_option(
-            SimpleNamespace(
-                config_options=[SimpleNamespace(id="mode")],
+            acp_schema.NewSessionResponse(
+                session_id="session",
+                config_options=[_select_option("mode")],
             )
         )
         is False
     )
     assert (
         _has_model_config_option(
-            SimpleNamespace(
-                config_options=[
-                    SimpleNamespace(id="mode"),
-                    SimpleNamespace(id="model"),
-                ],
+            acp_schema.NewSessionResponse(
+                session_id="session",
+                config_options=[_select_option("mode"), _select_option("model")],
             )
         )
         is True
     )
-    assert (
-        _has_model_config_option(SimpleNamespace(configOptions=[{"id": "model"}]))
-        is True
+
+
+def test_agent_cache_store_preserves_boolean_and_mode_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from acpterm import agent_cache
+
+    monkeypatch.setattr(agent_cache, "CACHE_FILE", tmp_path / "agent_cache.json")
+
+    agent_cache.store(
+        "fake-agent",
+        config_options=[
+            acp_schema.SessionConfigOptionBoolean(
+                id="auto",
+                name="Auto",
+                type="boolean",
+                current_value=False,
+            ),
+            acp_schema.SessionConfigOptionSelect(
+                id="model",
+                name="Model",
+                current_value="gpt-5",
+                options=[
+                    acp_schema.SessionConfigSelectOption(value="gpt-5", name="GPT-5")
+                ],
+            ),
+        ],
+        modes=acp_schema.SessionModeState(
+            current_mode_id="build",
+            available_modes=[acp_schema.SessionMode(id="build", name="Build")],
+        ),
+        commands=[acp_schema.AvailableCommand(name="deploy", description="Deploy app")],
     )
+
+    config_options = agent_cache.get_config_options("fake-agent")
+    assert config_options is not None
+    assert config_options[0]["current_value"] is False
+    assert config_options[1]["current_value"] == "gpt-5"
+    assert config_options[1]["options"] == [{"id": "gpt-5", "name": "GPT-5"}]
+
+    modes = agent_cache.get_modes("fake-agent")
+    assert modes is not None
+    assert modes["current_mode_id"] == "build"
+    assert modes["available_modes"] == [
+        {"id": "build", "name": "Build", "description": None}
+    ]
+
+    commands = agent_cache.get_commands("fake-agent")
+    assert commands == [{"name": "deploy", "description": "Deploy app"}]
 
 
 def test_is_method_not_found_matches_only_32601() -> None:
@@ -1064,18 +1122,14 @@ def test_update_tool_call_ignores_empty_raw_input(empty_raw_input: object) -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["raw_input", "rawInput"])
-async def test_session_update_forwards_raw_input_on_tool_call_update(
-    field: str,
-) -> None:
+async def test_session_update_forwards_raw_input_on_tool_call_update() -> None:
     recorder = TranscriptRecorder("prompt")
     recorder.add_tool_call("tc-1", "Run", "execute")
     client = AgentClient(silent=True, recorder=recorder)
-    update = SimpleNamespace(
-        sessionUpdate="tool_call_update",
-        toolCallId="tc-1",
+    update = acp_schema.ToolCallProgress(
+        tool_call_id="tc-1",
         status="in_progress",
-        **{field: {"command": "ls"}},
+        raw_input={"command": "ls"},
     )
 
     await client.session_update("session", update)
@@ -1090,9 +1144,13 @@ async def test_session_update_forwards_tool_call_name(event_type: str) -> None:
     if event_type == "tool_call_update":
         recorder.add_tool_call("tc-1", "Run", "execute")
     client = AgentClient(silent=True, recorder=recorder)
-    update = SimpleNamespace(
-        sessionUpdate=event_type,
-        toolCallId="tc-1",
+    model = (
+        acp_schema.ToolCallStart
+        if event_type == "tool_call"
+        else acp_schema.ToolCallProgress
+    )
+    update = model(
+        tool_call_id="tc-1",
         title="Run",
         kind="execute",
         name="bash",
