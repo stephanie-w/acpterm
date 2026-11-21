@@ -861,10 +861,10 @@ class ACPAgent:
             blocks,
         )
         stop_reason = str(resp.stop_reason)
-        format_stop_reason(stop_reason)
+        usage = _extract_usage_tokens(getattr(resp, "usage", None))
+        format_stop_reason(stop_reason, usage=usage)
         if self._transcript_recorder:
             self._transcript_recorder.set_stop_reason(stop_reason)
-            usage = _extract_usage_tokens(getattr(resp, "usage", None))
             if usage:
                 self._transcript_recorder.set_usage(usage)
         return stop_reason

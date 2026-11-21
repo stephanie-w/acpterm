@@ -710,6 +710,29 @@ async def test_send_prompt_without_recorder_handles_resp_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_prompt_passes_usage_to_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, conn = _agent_with_conn()
+    agent._transcript_recorder = None
+    conn.prompt = AsyncMock(return_value=_prompt_response(usage=_usage_tokens()))
+    format_stop_reason = MagicMock()
+    monkeypatch.setattr("acpterm.acp_agent.format_stop_reason", format_stop_reason)
+
+    await agent.send_prompt("prompt")
+
+    format_stop_reason.assert_called_once_with(
+        "end_turn",
+        usage={
+            "total_tokens": 150,
+            "input_tokens": 100,
+            "output_tokens": 40,
+            "thought_tokens": 10,
+        },
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("prompt", ["hello", ""])
 async def test_send_prompt_builds_text_content_block(prompt: str) -> None:
     agent, conn = _agent_with_conn()
