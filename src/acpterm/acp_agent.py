@@ -14,12 +14,14 @@ from acp.connection import StreamDirection, StreamEvent
 from acp.exceptions import RequestError
 from acp.transports import spawn_stdio_transport
 from rich.console import Console
+from rich.markup import escape
 from rich.prompt import Confirm
 
 from .config import resolve_agent_command
 from .hooks import HookDefinition
 from .output import (
     _state,
+    _tag,
     display_initial_session_info,
     format_session_update,
     format_stop_reason,
@@ -328,9 +330,9 @@ class AgentClient:
         )
 
         if not self._silent:
-            name_suffix = f" \\[{name}]" if name else ""
+            name_suffix = f" {_tag(name)}" if name else ""
             _console.print(
-                f"\n[yellow][perm][/yellow] {title}{name_suffix} "
+                f"\n[yellow][perm][/yellow] {escape(title)}{name_suffix} "
                 f"[dim]({kind_str})[/dim]"
             )
 

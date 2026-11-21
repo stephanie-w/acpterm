@@ -161,6 +161,26 @@ def test_format_session_update_tool_call_omits_empty_name(
     assert "[None]" not in text
 
 
+@pytest.mark.parametrize("event_type", ["tool_call", "tool_call_update"])
+def test_format_session_update_escapes_tool_call_markup(
+    rendered: StringIO, event_type: str
+) -> None:
+    output.format_session_update(
+        "session",
+        SimpleNamespace(
+            session_update=event_type,
+            title="Run [red]shell[/red]",
+            name="[bold]bash[/bold]",
+            kind="execute",
+            status="in_progress",
+        ),
+    )
+
+    text = rendered.getvalue()
+    assert "Run [red]shell[/red]" in text
+    assert "[bold]bash[/bold]" in text
+
+
 def test_format_stop_reason_ignores_only_malformed_tokens(rendered: StringIO) -> None:
     output.format_stop_reason(
         "end_turn",

@@ -5,6 +5,7 @@ from typing import Any
 from acp import schema as acp_schema
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.markup import escape
 
 from .usage import format_context_usage, format_cost, format_token_breakdown
 
@@ -27,7 +28,7 @@ _PLAN_STATUS_STYLES: dict[str, str] = {
 
 
 def _tag(label: str, style: str | None = None) -> str:
-    escaped = f"\\[{label}]"
+    escaped = f"\\[{escape(label)}]"
     if style:
         return f"[{style}]{escaped}[/{style}]"
     return escaped
@@ -168,7 +169,7 @@ def format_session_update(
         status = getattr(update, "status", "pending") or "pending"
         name_suffix = f" {_tag(name)}" if name else ""
         _console.print(
-            f"{_tag('tool' if _state.tool_kind is None else _state.tool_kind, 'yellow')} {title}{name_suffix} ({status})"
+            f"{_tag('tool' if _state.tool_kind is None else _state.tool_kind, 'yellow')} {escape(title)}{name_suffix} ({status})"
         )
 
     elif session_update == "tool_call_update":
@@ -184,7 +185,7 @@ def format_session_update(
 
         parts: list[str] = []
         if title:
-            parts.append(title)
+            parts.append(escape(title))
         if name:
             parts.append(_tag(name))
         if status:

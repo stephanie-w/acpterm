@@ -1140,3 +1140,33 @@ async def test_request_permission_includes_name(
     assert captured["event"].extra["name"] == "bash"
     assert "[bash]" in stream.getvalue()
     assert resp.outcome.outcome == "selected"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_escapes_tool_call_markup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        width=200,
+        force_terminal=False,
+        color_system=None,
+        highlight=False,
+    )
+    monkeypatch.setattr("acpterm.acp_agent._console", console)
+
+    client = AgentClient(silent=False, read_only=True)
+    tool_call = _make_tool_call(
+        "read",
+        title="Read [red]secret[/red]",
+        name="[bold]bash[/bold]",
+    )
+
+    await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    text = stream.getvalue()
+    assert "Read [red]secret[/red]" in text
+    assert "[bold]bash[/bold]" in text
