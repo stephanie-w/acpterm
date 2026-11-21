@@ -6,7 +6,7 @@ from acp import schema as acp_schema
 from rich.console import Console
 from rich.markdown import Markdown
 
-from .transcript import _token_count
+from .usage import format_context_usage, format_cost, format_token_breakdown
 
 
 _console = Console(highlight=False)
@@ -301,39 +301,19 @@ def _print_usage(usage: dict[str, Any] | None = None) -> None:
     if usage:
         merged.update(usage)
 
-    total_tokens = _token_count(merged.get("total_tokens"))
-    breakdown: list[str] = []
-    component_sum = 0
-    for key, label in (
-        ("input_tokens", "input"),
-        ("output_tokens", "output"),
-        ("thought_tokens", "thought"),
-    ):
-        count = _token_count(merged.get(key))
-        if count is not None:
-            breakdown.append(f"{label}: {count:,}")
-            component_sum += count
-    if total_tokens is None and breakdown:
-        total_tokens = component_sum
+    total_tokens, breakdown = format_token_breakdown(merged)
 
     lines: list[str] = []
     if total_tokens is not None:
-        suffix = f" ({', '.join(breakdown)})" if breakdown else ""
+        suffix = f" ({breakdown})" if breakdown else ""
         lines.append(f"{_tag('tokens', 'dim')} {total_tokens:,} tokens{suffix}")
 
-    used = _token_count(merged.get("used"))
-    size = _token_count(merged.get("size"))
-    cost = merged.get("cost")
-    if used is not None and size is not None:
-        pct = (used / size * 100) if size > 0 else 0
-        lines.append(
-            f"{_tag('context', 'dim')} {used:,} / {size:,} tokens ({pct:.1f}%)"
-        )
+    context = format_context_usage(merged)
+    if context is not None:
+        lines.append(f"{_tag('context', 'dim')} {context}")
+    cost = format_cost(merged)
     if cost is not None:
-        amount = getattr(cost, "amount", None)
-        currency = getattr(cost, "currency", None)
-        if amount is not None and currency:
-            lines.append(f"{_tag('cost', 'dim')} ${amount:.2f} {currency}")
+        lines.append(f"{_tag('cost', 'dim')} {cost}")
 
     if lines:
         _console.print()
