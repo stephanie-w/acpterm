@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from acp import schema as acp_schema
 from acp.exceptions import RequestError
 import pytest
+from rich.console import Console
 
 from acpterm.acp_agent import (
     _has_model_config_option,
@@ -18,6 +20,7 @@ from acpterm.acp_agent import (
     AgentClient,
 )
 from acpterm.cli import _fetch_and_cache_agent_info
+from acpterm.hooks import HookDefinition
 from acpterm.transcript import TranscriptRecorder
 
 
@@ -25,9 +28,12 @@ class _SpawnShortCircuit(RuntimeError):
     """Raised to short-circuit start() after spawn_stdio_transport is invoked."""
 
 
-def _make_tool_call(kind: str, title: str = "Test tool") -> MagicMock:
+def _make_tool_call(
+    kind: str, title: str = "Test tool", name: str | None = None
+) -> MagicMock:
     tc = MagicMock()
     tc.title = title
+    tc.name = name
     kind_mock = MagicMock()
     kind_mock.value = kind
     tc.kind = kind_mock
@@ -963,6 +969,7 @@ def test_tool_call_entry_exposes_only_clean_fields() -> None:
     )
 
     assert set(recorder.tool_calls["tc-1"]) == {
+        "name",
         "title",
         "kind",
         "status",
@@ -971,7 +978,70 @@ def test_tool_call_entry_exposes_only_clean_fields() -> None:
         "raw_output",
         "duration_seconds",
     }
+    assert recorder.tool_calls["tc-1"]["name"] is None
     assert "tc-1" in recorder._tool_call_starts
+
+
+def test_update_tool_call_name_preservation() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("tc-1", "Run", "execute", name="bash")
+
+    recorder.update_tool_call("tc-1", status="in_progress")
+    assert recorder.tool_calls["tc-1"]["name"] == "bash"
+
+    recorder.update_tool_call("tc-1", name="shell")
+    assert recorder.tool_calls["tc-1"]["name"] == "shell"
+
+
+def test_tool_call_raw_payload_isolation() -> None:
+    raw_input = {"command": "ls", "args": ["-la"]}
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("tc-1", "Run", "execute", raw_input=raw_input)
+
+    raw_input["command"] = "rm"
+    raw_input["args"].append("-rf")
+
+    assert recorder.tool_calls["tc-1"]["raw_input"] == {
+        "command": "ls",
+        "args": ["-la"],
+    }
+
+    updated_input = {"command": "pwd"}
+    raw_output = {"stdout": ["ok"]}
+    recorder.update_tool_call("tc-1", raw_input=updated_input, raw_output=raw_output)
+
+    updated_input["command"] = "mutated"
+    raw_output["stdout"].append("mutated")
+
+    assert recorder.tool_calls["tc-1"]["raw_input"] == {"command": "pwd"}
+    assert recorder.tool_calls["tc-1"]["raw_output"] == {"stdout": ["ok"]}
+
+
+def test_to_markdown_tool_call_header() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call("tc-1", "Run", "execute", name="bash")
+    recorder.update_tool_call("tc-1", status="completed")
+    recorder.add_tool_call("tc-2", "Read", "read")
+    recorder.add_tool_call("tc-3", "Edit", "edit", name="")
+
+    markdown = recorder.to_markdown()
+
+    assert "### `Run` [bash] (execute) - completed" in markdown
+    assert "### `Read` (read) - pending" in markdown
+    assert "### `Edit` (edit) - pending" in markdown
+
+
+def test_to_markdown_non_primitive_payload() -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.add_tool_call(
+        "tc-1", "Read", "read", raw_input={"path": Path("src/file.py")}
+    )
+    recorder.update_tool_call("tc-1", raw_output={"resolved": Path("src/output.py")})
+
+    markdown = recorder.to_markdown()
+
+    assert '"path": "src/file.py"' in markdown
+    assert '"resolved": "src/output.py"' in markdown
 
 
 def test_update_tool_call_replaces_raw_input_when_non_empty() -> None:
@@ -1011,3 +1081,92 @@ async def test_session_update_forwards_raw_input_on_tool_call_update(
     await client.session_update("session", update)
 
     assert recorder.tool_calls["tc-1"]["raw_input"] == {"command": "ls"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["tool_call", "tool_call_update"])
+async def test_session_update_forwards_tool_call_name(event_type: str) -> None:
+    recorder = TranscriptRecorder("prompt")
+    if event_type == "tool_call_update":
+        recorder.add_tool_call("tc-1", "Run", "execute")
+    client = AgentClient(silent=True, recorder=recorder)
+    update = SimpleNamespace(
+        sessionUpdate=event_type,
+        toolCallId="tc-1",
+        title="Run",
+        kind="execute",
+        name="bash",
+    )
+
+    await client.session_update("session", update)
+
+    assert recorder.tool_calls["tc-1"]["name"] == "bash"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_includes_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run_permission_hook(
+        event: Any, _hooks: Any, *, verbose: bool = False
+    ) -> int:
+        captured["event"] = event
+        return 0
+
+    monkeypatch.setattr("acpterm.hooks.run_permission_hook", fake_run_permission_hook)
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        width=200,
+        force_terminal=False,
+        color_system=None,
+        highlight=False,
+    )
+    monkeypatch.setattr("acpterm.acp_agent._console", console)
+
+    client = AgentClient(
+        silent=False,
+        permission_hooks=[HookDefinition(name="capture", on="permission")],
+        project_root=tmp_path,
+    )
+    tool_call = _make_tool_call("execute", title="Run shell", name="bash")
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    assert captured["event"].extra["name"] == "bash"
+    assert "[bash]" in stream.getvalue()
+    assert resp.outcome.outcome == "selected"
+
+
+@pytest.mark.asyncio
+async def test_request_permission_escapes_tool_call_markup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = StringIO()
+    console = Console(
+        file=stream,
+        width=200,
+        force_terminal=False,
+        color_system=None,
+        highlight=False,
+    )
+    monkeypatch.setattr("acpterm.acp_agent._console", console)
+
+    client = AgentClient(silent=False, read_only=True)
+    tool_call = _make_tool_call(
+        "read",
+        title="Read [red]secret[/red]",
+        name="[bold]bash[/bold]",
+    )
+
+    await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    text = stream.getvalue()
+    assert "Read [red]secret[/red]" in text
+    assert "[bold]bash[/bold]" in text

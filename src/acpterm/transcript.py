@@ -6,6 +6,7 @@ and final responses to export as formatted Markdown.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 import time
@@ -53,15 +54,17 @@ class TranscriptRecorder:
         title: str,
         kind: str,
         raw_input: Any | None = None,
+        name: str | None = None,
     ) -> None:
         """Initialize a recorded tool call."""
         self._tool_call_starts[tool_call_id] = time.monotonic()
         self.tool_calls[tool_call_id] = {
+            "name": name,
             "title": title,
             "kind": kind,
             "status": "pending",
             "content": [],
-            "raw_input": raw_input,
+            "raw_input": copy.deepcopy(raw_input),
             "raw_output": None,
             "duration_seconds": None,
         }
@@ -74,11 +77,13 @@ class TranscriptRecorder:
         content: str | None = None,
         raw_output: Any | None = None,
         raw_input: Any | None = None,
+        name: str | None = None,
     ) -> None:
         """Update an existing tool call's status or append output content."""
         if tool_call_id not in self.tool_calls:
             self._tool_call_starts[tool_call_id] = time.monotonic()
             self.tool_calls[tool_call_id] = {
+                "name": name,
                 "title": title or "Unknown tool",
                 "kind": "other",
                 "status": "pending",
@@ -88,16 +93,18 @@ class TranscriptRecorder:
                 "duration_seconds": None,
             }
         tc = self.tool_calls[tool_call_id]
+        if name is not None:
+            tc["name"] = name
         if status:
             tc["status"] = status
         if title:
             tc["title"] = title
         if content:
             tc["content"].append(content)
-        if raw_output:
-            tc["raw_output"] = raw_output
+        if raw_output is not None:
+            tc["raw_output"] = copy.deepcopy(raw_output)
         if not _is_empty_raw_input(raw_input):
-            tc["raw_input"] = raw_input
+            tc["raw_input"] = copy.deepcopy(raw_input)
         if status in _TERMINAL_TOOL_CALL_STATUSES:
             start = self._tool_call_starts.get(tool_call_id)
             if start is None:
@@ -190,11 +197,13 @@ class TranscriptRecorder:
                 title = tc["title"]
                 status = tc["status"]
                 kind = tc["kind"]
-                lines.append(f"### `{title}` ({kind}) - {status}")
+                name = tc.get("name")
+                name_suffix = f" [{name}]" if name else ""
+                lines.append(f"### `{title}`{name_suffix} ({kind}) - {status}")
                 if tc.get("raw_input"):
                     lines.append("**Raw Input**:")
                     lines.append("```json")
-                    lines.append(json.dumps(tc["raw_input"], indent=2))
+                    lines.append(json.dumps(tc["raw_input"], indent=2, default=str))
                     lines.append("```")
                 if tc["content"]:
                     content_str = "\n".join(tc["content"]).strip()
@@ -206,7 +215,7 @@ class TranscriptRecorder:
                 if tc.get("raw_output"):
                     lines.append("**Raw Output**:")
                     lines.append("```json")
-                    lines.append(json.dumps(tc["raw_output"], indent=2))
+                    lines.append(json.dumps(tc["raw_output"], indent=2, default=str))
                     lines.append("```")
                 lines.append("")
 
