@@ -73,8 +73,15 @@ def complete_agent(incomplete: str) -> list[str]:
     return [a for a in agents if a.startswith(incomplete)]
 
 
-def complete_session(incomplete: str) -> list[str]:
+def complete_session(ctx: typer.Context, incomplete: str) -> list[str]:
+    raw_cwd = ctx.params.get("cwd")
+    if raw_cwd is None and ctx.parent is not None:
+        raw_cwd = ctx.parent.params.get("cwd")
     cwd = str(Path.cwd().absolute())
+    if raw_cwd:
+        resolved = Path(raw_cwd).resolve()
+        if resolved.is_dir():
+            cwd = str(resolved)
     sessions = session_store.list_sessions(cwd=cwd)
     names = list({s.get("name", "") for s in sessions if s.get("name")})
     return [n for n in names if n.startswith(incomplete)]
@@ -140,6 +147,18 @@ def callback(
     verbose: Annotated[
         bool, typer.Option("-v", "--verbose", help="Show raw agent JSON-RPC responses")
     ] = False,
+    cwd: Annotated[
+        Path | None,
+        typer.Option(
+            "-C",
+            "--cwd",
+            help="Working directory for the agent and session lookup",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = None,
     read_only: Annotated[
         bool,
         typer.Option(
@@ -165,11 +184,11 @@ def callback(
         ),
     ] = None,
 ) -> None:
-    cwd = str(Path.cwd().absolute())
+    project_root = cwd.resolve() if cwd is not None else Path.cwd()
     resolved_agent = _resolve_agent(agent)
     resolved_session = session
     if resume and resolved_agent:
-        latest = session_store.get_latest(resolved_agent, cwd)
+        latest = session_store.get_latest(resolved_agent, str(project_root.absolute()))
         if latest:
             resolved_session = latest["name"]
             if verbose:
@@ -182,6 +201,7 @@ def callback(
     ctx.ensure_object(dict)
     ctx.obj["agent"] = resolved_agent
     ctx.obj["session_name"] = resolved_session or "default"
+    ctx.obj["cwd"] = project_root
     ctx.obj["auto_yes"] = auto_yes
     ctx.obj["verbose"] = verbose
     ctx.obj["read_only"] = read_only
@@ -205,12 +225,13 @@ async def _run_prompt(
     on_turn_end: str | None = None,
     chain_prompt: str | None = None,
     on_permission: str | None = None,
+    project_root: Path | None = None,
 ) -> None:
     from .config import Config
     from .hooks import HookDefinition, HookEvent, run_hooks
     from .transcript import TranscriptRecorder
 
-    project_root = Path.cwd()
+    project_root = project_root or Path.cwd()
     recorder = TranscriptRecorder(prompt_text, resources=resources) if export else None
 
     # Collect configured and CLI-provided hooks
@@ -308,7 +329,9 @@ async def _run_prompt(
         await agent.stop()
 
 
-async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) -> None:
+async def _fetch_and_cache_agent_info(
+    agent_binary: str, verbose: bool = False, cwd: Path | None = None
+) -> None:
     import json
 
     from acp import schema as acp_schema
@@ -352,13 +375,15 @@ async def _fetch_and_cache_agent_info(agent_binary: str, verbose: bool = False) 
     import os
 
     cmd = resolve_agent_command(agent_binary)
-    transport_ctx = spawn_stdio_transport(cmd[0], *cmd[1:], env=dict(os.environ))
+    cwd_str = str((cwd or Path.cwd()).absolute())
+    transport_ctx = spawn_stdio_transport(
+        cmd[0], *cmd[1:], env=dict(os.environ), cwd=cwd_str
+    )
     reader, writer, _process = await transport_ctx.__aenter__()  # type: ignore[func-returns-value]
     conn = ClientSideConnection(CachingClient(silent=True), writer, reader)
     try:
-        cwd = str(Path.cwd().absolute())
         await conn.initialize(protocol_version=1, client_capabilities=capabilities)
-        resp = await conn.new_session(cwd=cwd)
+        resp = await conn.new_session(cwd=cwd_str)
         # Give the agent a moment to emit available commands notifications
         await asyncio.sleep(0.5)
         if verbose:
@@ -390,7 +415,9 @@ def list_models(
     if not agent_cache.is_fresh(agent_binary):
         _run_async(
             _fetch_and_cache_agent_info(
-                agent_binary, verbose=ctx.obj.get("verbose", False)
+                agent_binary,
+                verbose=ctx.obj.get("verbose", False),
+                cwd=ctx.obj["cwd"],
             )
         )
 
@@ -484,7 +511,7 @@ def set_model(
     """Set the active model for the current session."""
     agent_binary = _require_agent(ctx)
     session_name = ctx.obj["session_name"]
-    cwd = str(Path.cwd().absolute())
+    cwd = str(ctx.obj["cwd"].absolute())
     verbose = ctx.obj.get("verbose", False)
 
     success: bool | None = None
@@ -534,7 +561,9 @@ def list_modes(
     if not agent_cache.is_fresh(agent_binary):
         _run_async(
             _fetch_and_cache_agent_info(
-                agent_binary, verbose=ctx.obj.get("verbose", False)
+                agent_binary,
+                verbose=ctx.obj.get("verbose", False),
+                cwd=ctx.obj["cwd"],
             )
         )
 
@@ -609,7 +638,7 @@ def set_mode(
     """Set the active mode for the current session."""
     agent_binary = _require_agent(ctx)
     session_name = ctx.obj["session_name"]
-    cwd = str(Path.cwd().absolute())
+    cwd = str(ctx.obj["cwd"].absolute())
     verbose = ctx.obj.get("verbose", False)
 
     success: bool | None = None
@@ -659,7 +688,9 @@ def list_commands(
     if not agent_cache.is_fresh(agent_binary):
         _run_async(
             _fetch_and_cache_agent_info(
-                agent_binary, verbose=ctx.obj.get("verbose", False)
+                agent_binary,
+                verbose=ctx.obj.get("verbose", False),
+                cwd=ctx.obj["cwd"],
             )
         )
 
@@ -769,7 +800,7 @@ def init_config(
 def list_sessions(ctx: typer.Context) -> None:
     """List saved sessions for the current agent and working directory."""
     agent_binary = _require_agent(ctx)
-    cwd = str(Path.cwd().absolute())
+    cwd = str(ctx.obj["cwd"].absolute())
     sessions = session_store.list_sessions(agent_name=agent_binary, cwd=cwd)
 
     table = Table(title=f"Sessions — {agent_binary}")
@@ -800,7 +831,7 @@ def show_session(
     """Show metadata for a saved session."""
     agent_binary = _require_agent(ctx)
     session_name = name or ctx.obj["session_name"]
-    cwd = str(Path.cwd().absolute())
+    cwd = str(ctx.obj["cwd"].absolute())
     entry = session_store.get_entry(agent_binary, cwd, session_name)
     if not entry:
         typer.echo(f"Session '{session_name}' not found for {agent_binary} in {cwd}")
@@ -851,7 +882,7 @@ def close_session(
     """Close a session (notifies the agent and removes local metadata)."""
     agent_binary = _require_agent(ctx)
     session_name = name or ctx.obj["session_name"]
-    cwd = str(Path.cwd().absolute())
+    cwd = str(ctx.obj["cwd"].absolute())
     verbose = ctx.obj.get("verbose", False)
 
     removed = False
@@ -1015,6 +1046,7 @@ def prompt(
             on_turn_end=on_turn_end,
             chain_prompt=chain_prompt,
             on_permission=on_permission,
+            project_root=ctx.obj["cwd"],
         )
     )
 
