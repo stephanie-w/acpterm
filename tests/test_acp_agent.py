@@ -590,6 +590,59 @@ def test_agent_cache_store_preserves_boolean_and_mode_fields(
     assert commands == [{"name": "deploy", "description": "Deploy app"}]
 
 
+def test_agent_cache_update_commands_initializes_entry_on_first_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from acpterm import agent_cache
+
+    monkeypatch.setattr(agent_cache, "CACHE_FILE", tmp_path / "agent_cache.json")
+
+    agent_cache.update_commands(
+        "fake-agent",
+        [acp_schema.AvailableCommand(name="review", description="Review code")],
+    )
+
+    assert agent_cache.get_commands("fake-agent") == [
+        {"name": "review", "description": "Review code"}
+    ]
+    assert agent_cache.is_fresh("fake-agent") is False
+
+    # Subsequent store() without commands preserves the previously cached commands
+    agent_cache.store("fake-agent", config_options=[], modes=None)
+    assert agent_cache.get_commands("fake-agent") == [
+        {"name": "review", "description": "Review code"}
+    ]
+    assert agent_cache.is_fresh("fake-agent") is True
+
+
+@pytest.mark.asyncio
+async def test_session_update_caches_available_commands_without_recorder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from acpterm import agent_cache
+
+    monkeypatch.setattr(agent_cache, "CACHE_FILE", tmp_path / "agent_cache.json")
+
+    client = AgentClient(
+        project_root=tmp_path,
+        agent_binary="fake-agent",
+        silent=True,
+        recorder=None,
+    )
+    update = acp_schema.AvailableCommandsUpdate(
+        session_update="available_commands_update",
+        available_commands=[
+            acp_schema.AvailableCommand(name="plan", description="Create a plan")
+        ],
+    )
+
+    await client.session_update("sess-1", update)
+
+    assert agent_cache.get_commands("fake-agent") == [
+        {"name": "plan", "description": "Create a plan"}
+    ]
+
+
 def test_is_method_not_found_matches_only_32601() -> None:
     assert _is_method_not_found(RequestError.method_not_found("x")) is True
     assert _is_method_not_found(RequestError(-32000, "auth required")) is False

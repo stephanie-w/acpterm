@@ -149,19 +149,18 @@ def update_mode(agent_name: str, mode_id: str) -> None:
 def update_commands(
     agent_name: str, commands: list[acp_schema.AvailableCommand] | None
 ) -> None:
-    """Update the cached commands list for an agent."""
+    """Update the cached commands list for an agent, creating an entry if needed."""
     data = _read()
-    entry = data.get(agent_name)
-    if entry:
-        cmd_list: list[dict[str, str]] = []
-        if commands:
-            for cmd in commands:
-                if cmd.name:
-                    cmd_list.append(
-                        {"name": cmd.name, "description": cmd.description or ""}
-                    )
-        entry["commands"] = cmd_list
-        _write(data)
+    entry = data.setdefault(agent_name, {})
+    cmd_list: list[dict[str, str]] = []
+    if commands:
+        for cmd in commands:
+            if cmd.name:
+                cmd_list.append(
+                    {"name": cmd.name, "description": cmd.description or ""}
+                )
+    entry["commands"] = cmd_list
+    _write(data)
 
 
 def _serialize_select_options(opt: ConfigOption) -> list[dict[str, str]]:

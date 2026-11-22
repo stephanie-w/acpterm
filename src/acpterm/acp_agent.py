@@ -196,10 +196,19 @@ class AgentClient:
         if not self._silent:
             format_session_update(session_id, update)
 
+        session_update = update.session_update
+
+        if session_update == "available_commands_update":
+            cmds = cast(acp_schema.AvailableCommandsUpdate, update).available_commands
+            if cmds:
+                from . import agent_cache
+
+                with contextlib.suppress(Exception):
+                    agent_cache.update_commands(self._agent_binary, cmds)
+            return
+
         if self._recorder:
             from .output import _extract_text, _format_content_blocks
-
-            session_update = update.session_update
 
             if session_update == "agent_thought_chunk":
                 text = _extract_text(update)
@@ -251,15 +260,6 @@ class AgentClient:
             elif session_update == "plan":
                 entries = cast(acp_schema.AgentPlanUpdate, update).entries
                 self._recorder.set_plan(entries)
-            elif session_update == "available_commands_update":
-                cmds = cast(
-                    acp_schema.AvailableCommandsUpdate, update
-                ).available_commands
-                if cmds:
-                    from . import agent_cache
-
-                    with contextlib.suppress(Exception):
-                        agent_cache.update_commands(self._agent_binary, cmds)
 
     def _record_diff_paths(self, content_blocks: list[ToolContentBlock]) -> None:
         """Extract file paths from diff content blocks and record as file operations."""
