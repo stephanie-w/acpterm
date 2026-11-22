@@ -106,3 +106,7 @@ Before signaling completion, verify:
 
 - **Interactive Commands**: If a task requires running an interactive CLI or a command that depends on a specific terminal state (like `uv run acp-client`), **request the developer to run it**.
 - **Observational Data**: Ask the developer for specific output or logs if the environment prevents you from seeing them directly.
+
+## 9. ACP Protocol Schema
+
+- `docs/acp-schema.json`: JSON Schema generated from the installed `agent-client-protocol` SDK (`just acp-schema`); query with `jq '."$defs".<Type>'` (e.g. `jq '."$defs" | keys' docs/acp-schema.json`) instead of reading `.venv/.../acp/schema.py`.
