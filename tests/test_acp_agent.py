@@ -265,22 +265,117 @@ async def test_read_only_blocks_write_kind(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_only_does_not_auto_approve_non_read_kinds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("kind", ["edit", "delete", "execute", "other", "unknown"])
+async def test_read_only_denies_mutating_kinds_without_prompting(
+    kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """In read_only mode, non-read kinds (e.g. 'edit') fall through to interactive prompt."""
-    client = AgentClient(read_only=True, silent=False, project_root=tmp_path)
-    tool_call = _make_tool_call("edit", title="Edit File src/foo.py")
+    """In read_only mode, mutating kinds are denied before any interactive prompt."""
+    recorder = TranscriptRecorder("prompt")
+    client = AgentClient(
+        read_only=True, silent=False, recorder=recorder, project_root=tmp_path
+    )
+    tool_call = _make_tool_call(kind, title=f"Do {kind}")
     options = [_make_option("allow")]
 
-    # Patch Confirm.ask to simulate the user denying the request
-    monkeypatch.setattr("acpterm.acp_agent.Confirm.ask", lambda *_a, **_kw: False)
+    def fail_prompt(*_args: object, **_kwargs: object) -> bool:
+        raise AssertionError("interactive prompt must not run in read-only mode")
+
+    monkeypatch.setattr("acpterm.acp_agent.Confirm.ask", fail_prompt)
 
     resp = await client.request_permission(
         session_id="s1", tool_call=tool_call, options=options
     )
 
     assert resp.outcome.outcome == "cancelled"
+    assert recorder.permissions == [
+        {"title": f"Do {kind}", "kind": kind, "outcome": "denied"}
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("silent", "auto_approve"),
+    [(True, False), (False, True), (True, True)],
+)
+async def test_read_only_denies_mutating_kinds_despite_auto_approval(
+    silent: bool, auto_approve: bool, tmp_path: Path
+) -> None:
+    """--yes and silent mode cannot override read-only denial."""
+    client = AgentClient(
+        read_only=True,
+        silent=silent,
+        auto_approve=auto_approve,
+        project_root=tmp_path,
+    )
+    tool_call = _make_tool_call("edit", title="Edit File src/foo.py")
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    assert resp.outcome.outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_read_only_does_not_run_permission_hooks_for_mutating_kinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An approving permission hook cannot override read-only denial."""
+
+    async def fail_hook(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("permission hooks must not run in read-only mode")
+
+    monkeypatch.setattr("acpterm.hooks.run_permission_hook", fail_hook)
+    client = AgentClient(
+        read_only=True,
+        silent=True,
+        permission_hooks=[HookDefinition(name="approve", on="permission")],
+        project_root=tmp_path,
+    )
+    tool_call = _make_tool_call("execute", title="Run shell")
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    assert resp.outcome.outcome == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["edit", "execute"])
+async def test_auto_approve_still_allows_mutating_kinds_without_read_only(
+    kind: str, tmp_path: Path
+) -> None:
+    """Without read_only, --yes/silent mode still auto-approves mutating kinds."""
+    client = AgentClient(
+        read_only=False, silent=True, auto_approve=True, project_root=tmp_path
+    )
+    tool_call = _make_tool_call(kind, title=f"Do {kind}")
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    assert resp.outcome.outcome == "selected"
+    assert resp.outcome.option_id == "allow"
+
+
+@pytest.mark.asyncio
+async def test_interactive_confirmation_still_allows_mutating_kind_without_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without read_only, an approving interactive prompt still works as before."""
+    client = AgentClient(read_only=False, silent=False, project_root=tmp_path)
+    tool_call = _make_tool_call("edit", title="Edit File src/foo.py")
+
+    monkeypatch.setattr("acpterm.acp_agent.Confirm.ask", lambda *_a, **_kw: True)
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[_make_option("allow")]
+    )
+
+    assert resp.outcome.outcome == "selected"
+    assert resp.outcome.option_id == "allow"
 
 
 @pytest.mark.asyncio
