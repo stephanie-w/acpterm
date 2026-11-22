@@ -527,13 +527,17 @@ def set_model(
     # Always save to the default model configuration
     from .config import Config
 
+    saved = False
     try:
         config = Config.load()
         config.set_default_model(agent_binary, model_id)
+        saved = True
     except Exception as e:
         typer.echo(f"Warning: Failed to save '{model_id}' as default: {e}", err=True)
 
     if success is None:
+        if not saved:
+            raise typer.Exit(code=1)
         typer.echo(
             f"No active session found. Saved '{model_id}' as the default"
             f" model for agent '{agent_binary}' for future sessions."
@@ -541,10 +545,15 @@ def set_model(
         raise typer.Exit(code=0)
     elif not success:
         raise typer.Exit(code=1)
-    else:
+    elif saved:
         typer.echo(
             f"Model set to '{model_id}' for session '{session_name}', and"
             " saved as default for future sessions."
+        )
+    else:
+        typer.echo(
+            f"Model set to '{model_id}' for session '{session_name}'"
+            " (default not saved)."
         )
 
 
@@ -654,13 +663,17 @@ def set_mode(
     # Always save to the default mode configuration
     from .config import Config
 
+    saved = False
     try:
         config = Config.load()
         config.set_default_mode(agent_binary, mode_id)
+        saved = True
     except Exception as e:
         typer.echo(f"Warning: Failed to save '{mode_id}' as default: {e}", err=True)
 
     if success is None:
+        if not saved:
+            raise typer.Exit(code=1)
         typer.echo(
             f"No active session found. Saved '{mode_id}' as the default"
             f" mode for agent '{agent_binary}' for future sessions."
@@ -668,10 +681,14 @@ def set_mode(
         raise typer.Exit(code=0)
     elif not success:
         raise typer.Exit(code=1)
-    else:
+    elif saved:
         typer.echo(
             f"Mode set to '{mode_id}' for session '{session_name}', and"
             " saved as default for future sessions."
+        )
+    else:
+        typer.echo(
+            f"Mode set to '{mode_id}' for session '{session_name}' (default not saved)."
         )
 
 

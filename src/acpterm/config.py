@@ -4,7 +4,7 @@ from pathlib import Path
 import shlex
 import shutil
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from .hooks import HookDefinition
 
@@ -24,6 +24,7 @@ class Config(BaseModel):
     hooks: list[HookDefinition] = Field(default_factory=list)
     token_commands: dict[str, str] = Field(default_factory=dict)
     profile_arns: dict[str, str] = Field(default_factory=dict)
+    _load_failed: bool = PrivateAttr(default=False)
 
     def get_token_command(self, agent_name: str) -> str | None:
         """Get configured auth token command for the agent."""
@@ -63,8 +64,18 @@ class Config(BaseModel):
         """Get the configured default model for the agent."""
         return self.default_models.get(agent_name)
 
+    def _ensure_writable(self) -> None:
+        """Raise if this Config was loaded as a fallback from a corrupt file."""
+        if self._load_failed:
+            msg = (
+                f"Refusing to overwrite {CONFIG_FILE} because it could not be parsed. "
+                "Fix or remove the corrupt configuration file first."
+            )
+            raise RuntimeError(msg)
+
     def set_default_model(self, agent_name: str, model_id: str) -> None:
         """Set the default model for the agent and save the config."""
+        self._ensure_writable()
         self.default_models[agent_name] = model_id
         self.save()
 
@@ -74,6 +85,7 @@ class Config(BaseModel):
 
     def set_default_mode(self, agent_name: str, mode_id: str) -> None:
         """Set the default mode for the agent and save the config."""
+        self._ensure_writable()
         self.default_modes[agent_name] = mode_id
         self.save()
 
@@ -96,10 +108,14 @@ class Config(BaseModel):
                     f"Falling back to default configuration.",
                     file=sys.stderr,
                 )
+                fallback = cls()
+                fallback._load_failed = True
+                return fallback
         return cls()
 
     def save(self) -> None:
         """Save the configuration to disk."""
+        self._ensure_writable()
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(self.model_dump_json(indent=2), encoding="utf-8")
 
