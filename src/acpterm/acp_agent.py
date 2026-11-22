@@ -319,6 +319,17 @@ class AgentClient:
                 )
             )
 
+        # Read-only is a hard boundary: hooks, --yes/silent auto-approval, and the
+        # interactive prompt must not be able to approve a mutating operation.
+        if self._read_only:
+            if not self._silent:
+                _console.print("[dim]  Denied (read-only)[/dim]")
+            if self._recorder:
+                self._recorder.add_permission(title, kind_str, "denied")
+            return acp_schema.RequestPermissionResponse(
+                outcome=acp_schema.DeniedOutcome(outcome="cancelled")
+            )
+
         # Check for permission hooks if defined
         if self._permission_hooks:
             from .hooks import HookEvent, run_permission_hook
