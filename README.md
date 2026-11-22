@@ -54,6 +54,7 @@ acpterm [OPTIONS] COMMAND [ARGS]...
 | Flag | Description |
 |------|-------------|
 | `-a, --agent <name>` | ACP agent binary to spawn (falls back to `default_agent` in config) |
+| `-C, --cwd <path>` | Working directory for the agent and session lookup (default: current directory) |
 | `-s, --session <name>` | Session name for `prompt` (default: `default`) |
 | `-r, --resume` | Resume the most recently used session for this project |
 | `-m, --model <id>` | Override or set the active model for the session |
