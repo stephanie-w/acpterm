@@ -12,6 +12,15 @@ from pathlib import Path
 import time
 from typing import Any
 
+from .session_events import (
+    MessageChunkEvent,
+    PlanEvent,
+    SessionEvent,
+    ThoughtChunkEvent,
+    ToolCallProgressEvent,
+    ToolCallStartEvent,
+    UsageEvent,
+)
 from .usage import format_context_usage, format_cost, format_token_breakdown
 
 
@@ -153,6 +162,42 @@ class TranscriptRecorder:
     def add_permission(self, title: str, kind: str, outcome: str) -> None:
         """Record a permission request and its outcome."""
         self.permissions.append({"title": title, "kind": kind, "outcome": outcome})
+
+    def record_event(self, event: SessionEvent) -> None:
+        """Record a normalized session event."""
+        match event:
+            case ThoughtChunkEvent():
+                if event.text:
+                    self.add_thought(event.text)
+            case MessageChunkEvent():
+                if event.text:
+                    self.add_message(event.text)
+            case ToolCallStartEvent():
+                self.add_tool_call(
+                    event.tool_call_id,
+                    event.title,
+                    event.kind or "other",
+                    raw_input=event.raw_input,
+                    name=event.name,
+                )
+            case ToolCallProgressEvent():
+                for operation in event.diff_operations:
+                    self.add_file_operation(operation.operation, operation.path)
+                self.update_tool_call(
+                    event.tool_call_id,
+                    event.status,
+                    event.title,
+                    event.content_text,
+                    raw_output=event.raw_output,
+                    raw_input=event.raw_input,
+                    name=event.name,
+                )
+            case UsageEvent():
+                self.set_usage(
+                    {"used": event.used, "size": event.size, "cost": event.cost}
+                )
+            case PlanEvent():
+                self.set_plan(list(event.entries))
 
     def to_markdown(self) -> str:
         """Format the recorded session events as a clean Markdown document."""
