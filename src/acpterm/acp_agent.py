@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 import contextlib
 from contextlib import AbstractAsyncContextManager
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 import warnings
 
 from acp import schema as acp_schema
@@ -23,11 +24,16 @@ from .output import (
     _state,
     _tag,
     display_initial_session_info,
-    format_session_update,
     format_stop_reason,
+    render_session_event,
     SessionResponse,
+)
+from .session_events import (
+    AvailableCommandsEvent,
+    normalize_session_update,
+    SessionEvent,
+    SessionEventObserver,
     SessionUpdate,
-    ToolContentBlock,
 )
 from .session_store import get as get_saved_session
 from .transcript import TranscriptRecorder
@@ -173,6 +179,7 @@ class AgentClient:
         permission_hooks: list[HookDefinition] | None = None,
         project_root: Path | None = None,
         max_read_lines: int | None = 2000,
+        observers: Sequence[SessionEventObserver] | None = None,
     ) -> None:
         _validate_max_read_lines(max_read_lines)
         self._auto_approve = auto_approve
@@ -184,8 +191,27 @@ class AgentClient:
         self._project_root = project_root or Path.cwd()
         self._max_read_lines = max_read_lines
 
+        if observers is None:
+            default_observers: list[SessionEventObserver] = []
+            if not silent:
+                default_observers.append(render_session_event)
+            default_observers.append(self._cache_available_commands)
+            if recorder is not None:
+                default_observers.append(recorder.record_event)
+            observers = default_observers
+        self._observers: list[SessionEventObserver] = list(observers)
+
     def on_connect(self, conn: Any) -> None:
         pass
+
+    def _cache_available_commands(self, event: SessionEvent) -> None:
+        """Cache commands advertised by the agent; failures are non-fatal."""
+        if not isinstance(event, AvailableCommandsEvent) or not event.commands:
+            return
+        from . import agent_cache
+
+        with contextlib.suppress(Exception):
+            agent_cache.update_commands(self._agent_binary, event.commands)
 
     async def session_update(
         self,
@@ -193,95 +219,11 @@ class AgentClient:
         update: SessionUpdate,
         **kwargs: Any,
     ) -> None:
-        if not self._silent:
-            format_session_update(session_id, update)
-
-        session_update = update.session_update
-
-        if session_update == "available_commands_update":
-            cmds = cast(acp_schema.AvailableCommandsUpdate, update).available_commands
-            if cmds:
-                from . import agent_cache
-
-                with contextlib.suppress(Exception):
-                    agent_cache.update_commands(self._agent_binary, cmds)
+        event = normalize_session_update(update)
+        if event is None:
             return
-
-        if self._recorder:
-            from .output import _extract_text, _format_content_blocks
-
-            if session_update == "agent_thought_chunk":
-                text = _extract_text(update)
-                if text:
-                    self._recorder.add_thought(text)
-            elif session_update == "agent_message_chunk":
-                text = _extract_text(update)
-                if text:
-                    self._recorder.add_message(text)
-            elif session_update == "tool_call":
-                tool_call = cast(acp_schema.ToolCallStart, update)
-                title = tool_call.title or "Unknown tool"
-                name = tool_call.name
-                kind_str = tool_call.kind or "other"
-                tool_call_id = tool_call.tool_call_id or "call_default"
-                raw_input = tool_call.raw_input or None
-                self._recorder.add_tool_call(
-                    tool_call_id, title, kind_str, raw_input=raw_input, name=name
-                )
-            elif session_update == "tool_call_update":
-                tool_call = cast(acp_schema.ToolCallProgress, update)
-                status = tool_call.status
-                title = tool_call.title
-                name = tool_call.name
-                kind_str = tool_call.kind
-                content = tool_call.content
-                tool_call_id = tool_call.tool_call_id or "call_default"
-                content_str = _format_content_blocks(content) if content else None
-                raw_output = tool_call.raw_output or None
-                raw_input = tool_call.raw_input or None
-                # Extract diff paths from content blocks for richer transcript
-                if content:
-                    self._record_diff_paths(content)
-                self._recorder.update_tool_call(
-                    tool_call_id,
-                    status,
-                    title,
-                    content_str,
-                    raw_output=raw_output,
-                    raw_input=raw_input,
-                    name=name,
-                )
-            elif session_update == "usage_update":
-                usage = cast(acp_schema.UsageUpdate, update)
-                used = usage.used
-                size = usage.size
-                cost = usage.cost
-                self._recorder.set_usage({"used": used, "size": size, "cost": cost})
-            elif session_update == "plan":
-                entries = cast(acp_schema.AgentPlanUpdate, update).entries
-                self._recorder.set_plan(entries)
-
-    def _record_diff_paths(self, content_blocks: list[ToolContentBlock]) -> None:
-        """Extract file paths from diff content blocks and record as file operations."""
-        if not self._recorder:
-            return
-        for block in content_blocks:
-            if block.type != "diff":
-                continue
-            # v1: path field directly on the diff block
-            diff_path = block.path
-            if diff_path:
-                old_text = block.old_text
-                op = "create" if old_text is None else "modify"
-                self._recorder.add_file_operation(op, diff_path)
-            # v2: changes[] array with structured operations
-            changes = getattr(block, "changes", None)
-            if changes:
-                for change in changes:
-                    operation = getattr(change, "operation", "modify")
-                    change_path = getattr(change, "path", None)
-                    if change_path:
-                        self._recorder.add_file_operation(operation, change_path)
+        for observer in self._observers:
+            observer(event)
 
     async def request_permission(
         self,

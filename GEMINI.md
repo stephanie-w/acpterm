@@ -66,6 +66,7 @@ For future development sessions, the codebase is structured as follows:
 
 *   **`src/acpterm/cli.py`**: The CLI entrypoint utilizing `typer`. Registers CLI subcommands for models, modes, sessions, prompting, and exec.
 *   **`src/acpterm/acp_agent.py`**: Handles connecting to the ACP agent process, lifecycle initialization, session load/creation, and mapping client capability callbacks.
+*   **`src/acpterm/session_events.py`**: Normalizes raw ACP session updates into typed, immutable `SessionEvent` dataclasses; owns text/content/diff extraction and stays free of other `acpterm` imports so output, transcript, and agent code can observe one event stream.
 *   **`src/acpterm/elicitation.py`**: Implements form rendering, UI prompts (via `rich.prompt`), validation, and defaults logic for structured client elicitations.
 *   **`src/acpterm/agent_cache.py`**: Manages a local cache of agent config options, models, and modes with TTL expiration.
 
