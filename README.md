@@ -75,6 +75,7 @@ acpterm -a opencode -r prompt "continue implementation"
 acpterm -a opencode prompt -E "explain this codebase in one sentence"  # one-shot ephemeral run
 acpterm -a opencode prompt -y "do stuff"                              # auto-approve permissions
 echo "explain this repo" | acpterm -a opencode prompt                  # pipe prompt from stdin
+printf "def add(a, b): return a + b\n" | acpterm -a opencode prompt "Review this function"  # combine stdin with an argument
 acpterm -a opencode prompt --file prompt.md                             # load prompt from file
 ```
 

@@ -229,3 +229,23 @@ def test_cli_set_preserves_corrupt_config_when_session_updated(
     assert "Refusing to overwrite" in result.output
     assert "default not saved" in result.output
     assert config_file.read_text(encoding="utf-8") == corrupt_content
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["", "   ", "\t\n"],
+    ids=["empty", "spaces", "whitespace"],
+)
+def test_empty_command_raises_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    config_file = tmp_path / "config.json"
+    monkeypatch.setattr("acpterm.config.CONFIG_FILE", config_file)
+    config = Config(agents={"empty-agent": command})
+
+    with pytest.raises(ValueError) as exc_info:
+        config.get_agent_command("empty-agent")
+
+    message = str(exc_info.value)
+    assert "empty-agent" in message
+    assert "config.json" in message
