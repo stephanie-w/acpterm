@@ -461,3 +461,40 @@ def test_changed_status_flushes_buffered_message_markdown(
 
     text = rendered.getvalue()
     assert text.index("hello") < text.index(expected)
+
+
+def test_thought_chunk_does_not_parse_rich_markup(rendered: StringIO) -> None:
+    output.render_session_event(
+        ThoughtChunkEvent(message_id="m1", text="check [/{style}] ")
+    )
+    output.render_session_event(
+        ThoughtChunkEvent(message_id="m1", text="and [red]raw[/red]")
+    )
+
+    text = rendered.getvalue()
+    assert "[thinking] check [/{style}] and [red]raw[/red]" in text
+
+
+def test_plan_event_escapes_content_markup_and_handles_unknown_status(
+    rendered: StringIO,
+) -> None:
+    from acpterm.session_events import PlanEvent
+
+    entries = (
+        acp_schema.PlanEntry(
+            content="Fix [/{style}] and [bold]tag[/bold]",
+            priority="high",
+            status="in_progress",
+        ),
+        acp_schema.PlanEntry.model_construct(
+            content="Fallback status [red]item[/red]",
+            priority="low",
+            status="unknown",
+        ),
+    )
+
+    output.render_session_event(PlanEvent(entries=entries))
+
+    text = rendered.getvalue()
+    assert "Fix [/{style}] and [bold]tag[/bold]" in text
+    assert "Fallback status [red]item[/red]" in text
