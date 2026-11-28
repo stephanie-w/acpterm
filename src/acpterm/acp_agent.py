@@ -485,15 +485,6 @@ class AgentClient:
         pass
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        from .auth import resolve_auth_token
-
-        result = await resolve_auth_token(
-            agent_name=self._agent_binary,
-            method=method,
-            params=params,
-        )
-        if result:
-            return result
         raise RequestError.method_not_found(method)
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
@@ -542,15 +533,8 @@ class ACPAgent:
         model_override: str | None = None,
         mode_override: str | None = None,
     ) -> None:
-        from .auth import has_auth_configured
-
         if not self._silent:
             reset_state()
-
-        auth_caps = None
-        if has_auth_configured(self.agent_binary):
-            auth_caps = acp_schema.AuthCapabilities(terminal=False)
-
         capabilities = acp_schema.ClientCapabilities(
             fs=acp_schema.FileSystemCapabilities(
                 read_text_file=True,
@@ -566,7 +550,6 @@ class ACPAgent:
             ),
             terminal=False,
             plan=acp_schema.PlanCapabilities(),
-            auth=auth_caps,
             field_meta={},
         )
 

@@ -447,7 +447,6 @@ def _install_start_harness(
     monkeypatch.setattr(
         "acpterm.acp_agent.resolve_agent_command", lambda _name: ["fake-agent"]
     )
-    monkeypatch.setattr("acpterm.auth.has_auth_configured", lambda _name: False)
     monkeypatch.setattr("acpterm.agent_cache.store", lambda *_a, **_k: None)
     monkeypatch.setattr("acpterm.config.Config.load", lambda: _NoConfig())
 
@@ -1489,3 +1488,11 @@ async def test_request_permission_escapes_tool_call_markup(
     text = stream.getvalue()
     assert "Read [red]secret[/red]" in text
     assert "[bold]bash[/bold]" in text
+
+
+@pytest.mark.asyncio
+async def test_ext_method_raises_method_not_found() -> None:
+    client = AgentClient(silent=True)
+    with pytest.raises(RequestError) as exc_info:
+        await client.ext_method("_custom/method", {})
+    assert exc_info.value.code == -32601
