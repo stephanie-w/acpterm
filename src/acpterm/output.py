@@ -152,10 +152,10 @@ def render_session_event(event: SessionEvent) -> None:
                 return
             _state.flush_md()
             if _state.begin_stream(event.message_id):
-                _console.print(event.text, end="")
+                _console.print(event.text, end="", markup=False)
                 return
             _console.print(f"{_tag('thinking', 'dim cyan')} ", end="")
-            _console.print(event.text, end="")
+            _console.print(event.text, end="", markup=False)
             _state.in_stream = True
             _state.update_type = "agent_thought_chunk"
             _state.msg_id = event.message_id
@@ -238,9 +238,8 @@ def render_session_event(event: SessionEvent) -> None:
                     elif priority == "low":
                         priority_tag = " [dim]↓[/dim]"
 
-                    _console.print(
-                        f"  [{style}]{icon}[/{style}] {content}{priority_tag}"
-                    )
+                    icon_str = f"[{style}]{icon}[/{style}]" if style else icon
+                    _console.print(f"  {icon_str} {escape(content)}{priority_tag}")
 
 
 def format_session_update(
