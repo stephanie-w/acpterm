@@ -58,6 +58,27 @@ logger = logging.getLogger(__name__)
 # Only non-mutating filesystem reads qualify; writes, deletes, executes, etc. remain blocked.
 _READ_ONLY_SAFE_KINDS: frozenset[str] = frozenset({"read"})
 
+# Permission option kinds that represent an explicit approval.
+_ALLOW_OPTION_KINDS: frozenset[str] = frozenset({"allow_once", "allow_always"})
+
+
+def _select_allow_option_id(options: Sequence[Any]) -> str | None:
+    """Return the agent's first allow-kind option id.
+
+    Empty option lists fall back to ``"allow_always"`` so explicit approvals
+    stay valid for agents that omit options. When options are supplied but none
+    is an allow kind, return ``None`` so the request is denied instead of
+    selecting a reject option.
+    """
+    if not options:
+        return "allow_always"
+    for option in options:
+        kind = getattr(option, "kind", None)
+        kind_value = getattr(kind, "value", kind)
+        if kind_value in _ALLOW_OPTION_KINDS:
+            return str(option.option_id)
+    return None
+
 
 def _agent_capabilities(
     init_resp: acp_schema.InitializeResponse | None,
@@ -228,6 +249,29 @@ class AgentClient:
         for observer in self._observers:
             observer(event)
 
+    def _permission_response(
+        self,
+        title: str,
+        kind_str: str,
+        options: Sequence[Any],
+    ) -> acp_schema.RequestPermissionResponse:
+        """Record and build a response selecting an allow-kind option if any."""
+        option_id = _select_allow_option_id(options)
+        if option_id is None:
+            if self._recorder:
+                self._recorder.add_permission(title, kind_str, "denied")
+            return acp_schema.RequestPermissionResponse(
+                outcome=acp_schema.DeniedOutcome(outcome="cancelled")
+            )
+        if self._recorder:
+            self._recorder.add_permission(title, kind_str, "approved")
+        return acp_schema.RequestPermissionResponse(
+            outcome=acp_schema.AllowedOutcome(
+                outcome="selected",
+                option_id=option_id,
+            )
+        )
+
     async def request_permission(
         self,
         session_id: str,
@@ -254,15 +298,7 @@ class AgentClient:
         if self._read_only and kind_str in _READ_ONLY_SAFE_KINDS:
             if not self._silent:
                 _console.print("[dim]  Auto-approved (read-only safe)[/dim]")
-            option_id = options[0].option_id if options else "allow_always"
-            if self._recorder:
-                self._recorder.add_permission(title, kind_str, "approved")
-            return acp_schema.RequestPermissionResponse(
-                outcome=acp_schema.AllowedOutcome(
-                    outcome="selected",
-                    option_id=option_id,
-                )
-            )
+            return self._permission_response(title, kind_str, options)
 
         # Read-only is a hard boundary: hooks, --yes/silent auto-approval, and the
         # interactive prompt must not be able to approve a mutating operation.
@@ -295,15 +331,7 @@ class AgentClient:
                 event, self._permission_hooks, verbose=not self._silent
             )
             if hook_code == 0:
-                option_id = options[0].option_id if options else "allow_always"
-                if self._recorder:
-                    self._recorder.add_permission(title, kind_str, "approved")
-                return acp_schema.RequestPermissionResponse(
-                    outcome=acp_schema.AllowedOutcome(
-                        outcome="selected",
-                        option_id=option_id,
-                    )
-                )
+                return self._permission_response(title, kind_str, options)
             if hook_code == 1:
                 if self._recorder:
                     self._recorder.add_permission(title, kind_str, "denied")
@@ -314,27 +342,11 @@ class AgentClient:
         if self._silent or self._auto_approve:
             if not self._silent:
                 _console.print("[dim]  Auto-approved (--yes)[/dim]")
-            option_id = options[0].option_id if options else "allow_always"
-            if self._recorder:
-                self._recorder.add_permission(title, kind_str, "approved")
-            return acp_schema.RequestPermissionResponse(
-                outcome=acp_schema.AllowedOutcome(
-                    outcome="selected",
-                    option_id=option_id,
-                )
-            )
+            return self._permission_response(title, kind_str, options)
 
         approved = Confirm.ask("  Allow?", default=True)
-        if approved and options:
-            option_id = options[0].option_id
-            if self._recorder:
-                self._recorder.add_permission(title, kind_str, "approved")
-            return acp_schema.RequestPermissionResponse(
-                outcome=acp_schema.AllowedOutcome(
-                    outcome="selected",
-                    option_id=option_id,
-                )
-            )
+        if approved:
+            return self._permission_response(title, kind_str, options)
         if self._recorder:
             self._recorder.add_permission(title, kind_str, "denied")
         return acp_schema.RequestPermissionResponse(
@@ -394,6 +406,8 @@ class AgentClient:
             self._recorder.add_file_operation("read", path, line=line, limit=limit)
         return acp_schema.ReadTextFileResponse(content=content)
 
+    # Terminal support is not advertised (ClientCapabilities(terminal=False));
+    # these stubs satisfy the static `Client` protocol and reject RPCs explicitly.
     async def create_terminal(
         self,
         session_id: str,
@@ -404,27 +418,27 @@ class AgentClient:
         output_byte_limit: int | None = None,
         **kwargs: Any,
     ) -> acp_schema.CreateTerminalResponse:
-        return acp_schema.CreateTerminalResponse(terminal_id="term_default")
+        raise RequestError.method_not_found("terminal/create")
 
     async def terminal_output(
         self, session_id: str, terminal_id: str, **kwargs: Any
     ) -> acp_schema.TerminalOutputResponse:
-        return acp_schema.TerminalOutputResponse(output="", truncated=False)
+        raise RequestError.method_not_found("terminal/output")
 
     async def release_terminal(
         self, session_id: str, terminal_id: str, **kwargs: Any
     ) -> acp_schema.ReleaseTerminalResponse | None:
-        return None
+        raise RequestError.method_not_found("terminal/release")
 
     async def wait_for_terminal_exit(
         self, session_id: str, terminal_id: str, **kwargs: Any
     ) -> acp_schema.WaitForTerminalExitResponse:
-        return acp_schema.WaitForTerminalExitResponse(exit_code=0)
+        raise RequestError.method_not_found("terminal/wait_for_exit")
 
     async def kill_terminal(
         self, session_id: str, terminal_id: str, **kwargs: Any
     ) -> acp_schema.KillTerminalResponse | None:
-        return None
+        raise RequestError.method_not_found("terminal/kill")
 
     async def create_elicitation(
         self, message: str, mode: acp_schema.ElicitationMode, **kwargs: Any
@@ -873,7 +887,13 @@ class ACPAgent:
         if self._process is not None:
             with contextlib.suppress(Exception):
                 self._process.terminate()
-                await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                except TimeoutError:
+                    # terminate() was ignored; kill() is the last chance to
+                    # avoid leaving an orphaned subprocess behind.
+                    self._process.kill()
+                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
         if self._conn:
             with contextlib.suppress(Exception):
                 await self._conn.close()

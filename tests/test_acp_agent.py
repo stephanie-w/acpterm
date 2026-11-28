@@ -49,10 +49,56 @@ def _make_tool_call(
     return tc
 
 
-def _make_option(option_id: str = "allow_always") -> MagicMock:
+def _make_option(
+    option_id: str = "allow_always", kind: str = "allow_once"
+) -> MagicMock:
     opt = MagicMock()
     opt.option_id = option_id
+    opt.kind = kind
     return opt
+
+
+_APPROVAL_PATHS = ("read_only", "hook", "auto_approve", "interactive")
+
+
+def _approval_client(
+    path: str,
+    recorder: TranscriptRecorder,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[AgentClient, MagicMock]:
+    """Build a client whose request_permission reaches the given approval path."""
+    if path == "read_only":
+        client = AgentClient(
+            read_only=True, silent=True, recorder=recorder, project_root=tmp_path
+        )
+        return client, _make_tool_call("read")
+    if path == "hook":
+
+        async def approve(*_args: object, **_kwargs: object) -> int:
+            return 0
+
+        monkeypatch.setattr("acpterm.hooks.run_permission_hook", approve)
+        client = AgentClient(
+            silent=True,
+            recorder=recorder,
+            permission_hooks=[HookDefinition(name="approve", on="permission")],
+            project_root=tmp_path,
+        )
+        return client, _make_tool_call("edit")
+    if path == "auto_approve":
+        client = AgentClient(
+            silent=True,
+            auto_approve=True,
+            recorder=recorder,
+            project_root=tmp_path,
+        )
+        return client, _make_tool_call("edit")
+    if path == "interactive":
+        monkeypatch.setattr("acpterm.acp_agent.Confirm.ask", lambda *_a, **_kw: True)
+        client = AgentClient(silent=False, recorder=recorder, project_root=tmp_path)
+        return client, _make_tool_call("edit")
+    raise AssertionError(f"unknown approval path: {path}")
 
 
 @pytest.mark.asyncio
@@ -383,6 +429,133 @@ async def test_interactive_confirmation_still_allows_mutating_kind_without_read_
 
     assert resp.outcome.outcome == "selected"
     assert resp.outcome.option_id == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "acp_method"),
+    [
+        ("create_terminal", {"command": "echo"}, "terminal/create"),
+        ("terminal_output", {"terminal_id": "t1"}, "terminal/output"),
+        ("release_terminal", {"terminal_id": "t1"}, "terminal/release"),
+        (
+            "wait_for_terminal_exit",
+            {"terminal_id": "t1"},
+            "terminal/wait_for_exit",
+        ),
+        ("kill_terminal", {"terminal_id": "t1"}, "terminal/kill"),
+    ],
+)
+async def test_terminal_methods_raise_method_not_found(
+    method_name: str, kwargs: dict[str, Any], acp_method: str, tmp_path: Path
+) -> None:
+    client = AgentClient(project_root=tmp_path)
+
+    with pytest.raises(RequestError) as exc_info:
+        await getattr(client, method_name)(session_id="s1", **kwargs)
+
+    assert exc_info.value.code == -32601
+    assert exc_info.value.data == {"method": acp_method}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _APPROVAL_PATHS)
+async def test_permission_skips_reject_first_options(
+    path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = TranscriptRecorder("prompt")
+    client, tool_call = _approval_client(path, recorder, tmp_path, monkeypatch)
+    options = [
+        _make_option("decline", kind="reject_once"),
+        _make_option("allow-once", kind="allow_once"),
+    ]
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=options
+    )
+
+    assert resp.outcome.outcome == "selected"
+    assert resp.outcome.option_id == "allow-once"
+    assert recorder.permissions[-1]["outcome"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_permission_accepts_enum_like_option_kind(tmp_path: Path) -> None:
+    client = AgentClient(silent=True, auto_approve=True, project_root=tmp_path)
+    tool_call = _make_tool_call("edit")
+    option = _make_option("allow-always")
+    option.kind = SimpleNamespace(value="allow_always")
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[option]
+    )
+
+    assert resp.outcome.outcome == "selected"
+    assert resp.outcome.option_id == "allow-always"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _APPROVAL_PATHS)
+async def test_permission_with_empty_options_uses_allow_always_fallback(
+    path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = TranscriptRecorder("prompt")
+    client, tool_call = _approval_client(path, recorder, tmp_path, monkeypatch)
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=[]
+    )
+
+    assert resp.outcome.outcome == "selected"
+    assert resp.outcome.option_id == "allow_always"
+    assert recorder.permissions[-1]["outcome"] == "approved"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", _APPROVAL_PATHS)
+async def test_permission_with_only_reject_options_denies(
+    path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = TranscriptRecorder("prompt")
+    client, tool_call = _approval_client(path, recorder, tmp_path, monkeypatch)
+    options = [
+        _make_option("decline-once", kind="reject_once"),
+        _make_option("decline-always", kind="reject_always"),
+    ]
+
+    resp = await client.request_permission(
+        session_id="s1", tool_call=tool_call, options=options
+    )
+
+    assert resp.outcome.outcome == "cancelled"
+    assert recorder.permissions[-1]["outcome"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_stop_escalates_to_kill_when_terminate_times_out(tmp_path: Path) -> None:
+    agent = ACPAgent(project_root=tmp_path)
+    process = MagicMock()
+    process.wait = AsyncMock(side_effect=[TimeoutError(), None])
+    conn = MagicMock()
+    conn.close = AsyncMock()
+    transport = MagicMock()
+    transport.__aexit__ = AsyncMock(return_value=None)
+    agent._process = cast(Any, process)
+    agent._conn = cast(Any, conn)
+    agent._transport_ctx = cast(Any, transport)
+    agent._session_id = "s1"
+
+    await agent.stop()
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_called_once_with()
+    assert process.wait.await_count == 2
+    conn.close.assert_awaited_once_with()
+    transport.__aexit__.assert_awaited_once_with(None, None, None)
+    assert agent._process is None
+    assert agent._conn is None
+    assert agent._transport_ctx is None
+    assert agent._session_id is None
 
 
 @pytest.mark.asyncio
