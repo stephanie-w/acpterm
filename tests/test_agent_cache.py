@@ -48,6 +48,34 @@ def test_write_failure_removes_temp_file(
     assert list(cache_file.parent.iterdir()) == []
 
 
+def test_write_dump_failure_removes_temp_file(
+    cache_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_dump(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("serialize failed")
+
+    monkeypatch.setattr(agent_cache.json, "dump", failing_dump)
+
+    with pytest.raises(TypeError, match="serialize failed"):
+        agent_cache.store(
+            "agent",
+            commands=[acp_schema.AvailableCommand(name="compact", description="")],
+        )
+
+    assert list(cache_file.parent.iterdir()) == []
+
+
+def test_read_recovers_from_invalid_utf8(
+    cache_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    cache_file.write_bytes(b"\xff\xfe\x00")
+
+    assert agent_cache.is_fresh("agent") is False
+    assert agent_cache.get_commands("agent") is None
+    assert "Warning" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "content",
     ["{not json", "[]", '"text"', "null"],

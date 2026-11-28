@@ -406,9 +406,9 @@ async def _fetch_and_cache_agent_info(
 
 def _refresh_cache_if_stale(ctx: typer.Context, agent_binary: str) -> None:
     """Refresh cached agent info when stale, exiting cleanly on resolution errors."""
-    if agent_cache.is_fresh(agent_binary):
-        return
     try:
+        if agent_cache.is_fresh(agent_binary):
+            return
         _run_async(
             _fetch_and_cache_agent_info(
                 agent_binary,

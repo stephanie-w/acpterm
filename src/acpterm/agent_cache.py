@@ -21,7 +21,7 @@ def _read() -> dict[str, Any]:
         return {}
     try:
         data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
         print(
             f"Warning: Failed to read agent cache {CACHE_FILE}: {e}. Ignoring it.",
             file=sys.stderr,
@@ -47,8 +47,8 @@ def _write(data: dict[str, Any]) -> None:
             dir=CACHE_FILE.parent,
             delete=False,
         ) as tmp_file:
-            json.dump(data, tmp_file, indent=2)
             tmp_path = Path(tmp_file.name)
+            json.dump(data, tmp_file, indent=2)
         os.replace(tmp_path, CACHE_FILE)
     except BaseException:
         if tmp_path is not None:

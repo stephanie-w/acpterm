@@ -43,6 +43,30 @@ def test_write_failure_removes_temp_file(
     assert list(sessions_file.parent.iterdir()) == []
 
 
+def test_write_dump_failure_removes_temp_file(
+    sessions_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_dump(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("serialize failed")
+
+    monkeypatch.setattr(session_store.json, "dump", failing_dump)
+
+    with pytest.raises(TypeError, match="serialize failed"):
+        session_store.save("agent", "/repo", "sid-1")
+
+    assert list(sessions_file.parent.iterdir()) == []
+
+
+def test_read_recovers_from_invalid_utf8(
+    sessions_file: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sessions_file.parent.mkdir(parents=True, exist_ok=True)
+    sessions_file.write_bytes(b"\xff\xfe\x00")
+
+    assert session_store.list_sessions() == []
+    assert "Warning" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     "content",
     ["{not json", "[]", '"text"', "null"],
