@@ -25,6 +25,7 @@ from acpterm.cli import _fetch_and_cache_agent_info
 from acpterm.hooks import HookDefinition
 from acpterm.session_events import (
     MessageChunkEvent,
+    normalize_session_update,
     ThoughtChunkEvent,
 )
 from acpterm.transcript import TranscriptRecorder
@@ -1231,6 +1232,99 @@ def test_transcript_recorder_skips_malformed_context_usage(bad_value: object) ->
         markdown = recorder.to_markdown()
 
         assert "**Context Usage**" not in markdown
+
+
+def test_record_event_tool_call_start_records_content_and_diffs() -> None:
+    recorder = TranscriptRecorder("prompt")
+    update = acp_schema.ToolCallStart(
+        tool_call_id="tc-1",
+        title="Edit file",
+        kind="edit",
+        content=[
+            acp_schema.ContentToolCallContent(
+                content=acp_schema.TextContentBlock(text="hello")
+            ),
+            acp_schema.FileEditToolCallContent(
+                path="src/a.py", old_text="old", new_text="new"
+            ),
+        ],
+    )
+
+    event = normalize_session_update(update)
+    assert event is not None
+    recorder.record_event(event)
+
+    recorded_content = recorder.tool_calls["tc-1"]["content"]
+    assert len(recorded_content) == 1
+    assert "hello" in recorded_content[0]
+    assert recorder.file_operations == [{"operation": "modify", "path": "src/a.py"}]
+    markdown = recorder.to_markdown()
+    assert "hello" in markdown
+    assert "- **modify** `src/a.py`" in markdown
+
+
+def test_record_event_tool_call_start_without_content_records_empty_content() -> None:
+    recorder = TranscriptRecorder("prompt")
+    update = acp_schema.ToolCallStart(
+        tool_call_id="tc-1", title="Read file", kind="read"
+    )
+
+    event = normalize_session_update(update)
+    assert event is not None
+    recorder.record_event(event)
+
+    assert recorder.tool_calls["tc-1"]["content"] == []
+    assert recorder.file_operations == []
+
+
+@pytest.mark.parametrize(
+    ("duration", "expected"),
+    [(1.25, "- **Duration**: 1.25 seconds"), (0.0, "- **Duration**: 0.00 seconds")],
+)
+def test_to_markdown_includes_duration_only_metadata(
+    duration: float, expected: str
+) -> None:
+    recorder = TranscriptRecorder("prompt")
+    recorder.set_duration(duration)
+
+    markdown = recorder.to_markdown()
+
+    assert "## Metadata" in markdown
+    assert expected in markdown
+
+
+def test_to_markdown_omits_metadata_when_all_fields_unset() -> None:
+    recorder = TranscriptRecorder("prompt")
+
+    markdown = recorder.to_markdown()
+
+    assert "## Metadata" not in markdown
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected_range"),
+    [(5, "L10-L14"), (0, "L10"), (-5, "L10"), (None, "L10")],
+)
+def test_add_file_operation_formats_non_inverted_range(
+    limit: int | None, expected_range: str
+) -> None:
+    recorder = TranscriptRecorder("prompt")
+
+    recorder.add_file_operation("read", "a.py", line=10, limit=limit)
+
+    assert recorder.file_operations == [
+        {"operation": "read", "path": "a.py", "range": expected_range}
+    ]
+    assert f"({expected_range})" in recorder.to_markdown()
+
+
+def test_add_file_operation_without_line_omits_range() -> None:
+    recorder = TranscriptRecorder("prompt")
+
+    recorder.add_file_operation("read", "a.py", line=None, limit=5)
+
+    assert recorder.file_operations == [{"operation": "read", "path": "a.py"}]
+    assert "(L" not in recorder.to_markdown()
 
 
 @pytest.mark.parametrize("status", ["completed", "failed", "error", "cancelled"])

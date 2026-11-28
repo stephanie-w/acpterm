@@ -64,6 +64,7 @@ class TranscriptRecorder:
         kind: str,
         raw_input: Any | None = None,
         name: str | None = None,
+        content: str | None = None,
     ) -> None:
         """Initialize a recorded tool call."""
         self._tool_call_starts[tool_call_id] = time.monotonic()
@@ -72,7 +73,7 @@ class TranscriptRecorder:
             "title": title,
             "kind": kind,
             "status": "pending",
-            "content": [],
+            "content": [content] if content else [],
             "raw_input": copy.deepcopy(raw_input),
             "raw_output": None,
             "duration_seconds": None,
@@ -154,7 +155,7 @@ class TranscriptRecorder:
         entry: dict[str, str | None] = {"operation": operation, "path": path}
         if line is not None:
             range_str = f"L{line}"
-            if limit is not None:
+            if limit is not None and limit > 0:
                 range_str += f"-L{line + limit - 1}"
             entry["range"] = range_str
         self.file_operations.append(entry)
@@ -173,12 +174,15 @@ class TranscriptRecorder:
                 if event.text:
                     self.add_message(event.text)
             case ToolCallStartEvent():
+                for operation in event.diff_operations:
+                    self.add_file_operation(operation.operation, operation.path)
                 self.add_tool_call(
                     event.tool_call_id,
                     event.title,
                     event.kind or "other",
                     raw_input=event.raw_input,
                     name=event.name,
+                    content=event.content_text,
                 )
             case ToolCallProgressEvent():
                 for operation in event.diff_operations:
@@ -289,7 +293,7 @@ class TranscriptRecorder:
             lines.append("".join(self.messages).strip())
             lines.append("")
 
-        if self.stop_reason or self.usage:
+        if self.stop_reason or self.usage or self.duration_seconds is not None:
             metadata: list[str] = []
             if self.stop_reason:
                 metadata.append(f"- **Stop Reason**: {self.stop_reason}")

@@ -241,6 +241,60 @@ def test_tool_call_progress_normalizes_content_and_diffs() -> None:
     assert len(event.content_text) < len(long_text)
 
 
+def test_tool_call_start_normalizes_text_content() -> None:
+    update = acp_schema.ToolCallStart(
+        tool_call_id="tc-1",
+        title="Read file",
+        kind="read",
+        content=[
+            acp_schema.ContentToolCallContent(
+                content=acp_schema.TextContentBlock(text="file contents")
+            ),
+        ],
+    )
+
+    event = cast(ToolCallStartEvent, normalize_session_update(update))
+
+    assert event.content_text == "file contents"
+    assert event.diff_operations == ()
+
+
+def test_tool_call_start_normalizes_diff_content() -> None:
+    update = acp_schema.ToolCallStart(
+        tool_call_id="tc-1",
+        title="Edit file",
+        kind="edit",
+        content=[
+            acp_schema.FileEditToolCallContent(
+                path="src/a.py", old_text="old", new_text="new"
+            ),
+        ],
+    )
+
+    event = cast(ToolCallStartEvent, normalize_session_update(update))
+
+    assert event.diff_operations == (FileOperation("modify", "src/a.py"),)
+    assert event.content_text is not None
+    assert "src/a.py" in event.content_text
+
+
+@pytest.mark.parametrize("content", [None, []])
+def test_tool_call_start_without_content_has_no_text_or_diffs(
+    content: list[Any] | None,
+) -> None:
+    update = acp_schema.ToolCallStart(
+        tool_call_id="tc-1",
+        title="Read file",
+        kind="read",
+        content=content,
+    )
+
+    event = cast(ToolCallStartEvent, normalize_session_update(update))
+
+    assert event.content_text is None
+    assert event.diff_operations == ()
+
+
 def test_tool_call_progress_normalizes_v2_changes_from_wire_payload() -> None:
     block = SimpleNamespace(
         type="diff",
