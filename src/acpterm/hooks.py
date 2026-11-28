@@ -181,8 +181,9 @@ async def run_permission_hook(
         verbose: Whether to print detailed execution logs.
 
     Returns:
-        int | None: Exit code of the first matching hook (0 = allow, 1 = deny, 2 = fallback),
-        or None if no matching hook ran.
+        int | None: Exit code of the first matching hook with a defined policy
+        (0 = allow, 1 = deny, 2 = fallback), or None if no matching hook produced
+        one. Hooks exiting with an unexpected code are logged and skipped.
     """
     matching_hooks = [h for h in hooks if h.on == "permission"]
     if not matching_hooks:
@@ -249,9 +250,10 @@ async def run_permission_hook(
                         )
                     return 2
                 _console.print(
-                    f"[red][hook:failed][/red] Permission hook '{hook_label}' exited with code {proc.returncode}"
+                    f"[yellow][hook:warning][/yellow] Permission hook "
+                    f"'{hook_label}' exited with unexpected code "
+                    f"{proc.returncode}; continuing to next hook"
                 )
-                return proc.returncode
             except Exception as e:
                 _console.print(f"[red][hook:error][/red] Permission hook error: {e}")
 

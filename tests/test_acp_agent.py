@@ -395,6 +395,61 @@ async def test_read_only_does_not_run_permission_hooks_for_mutating_kinds(
 
 
 @pytest.mark.asyncio
+async def test_permission_hook_chain_survives_unexpected_exit_and_approves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An earlier broken hook cannot prevent a later hook from approving."""
+
+    def fail_prompt(*_args: object, **_kwargs: object) -> bool:
+        raise AssertionError("interactive prompt must not run after hook approval")
+
+    monkeypatch.setattr("acpterm.acp_agent.Confirm.ask", fail_prompt)
+    client = AgentClient(
+        silent=False,
+        permission_hooks=[
+            HookDefinition(name="broken", on="permission", run="exit 127"),
+            HookDefinition(name="approve", on="permission", run="exit 0"),
+        ],
+        project_root=tmp_path,
+    )
+
+    resp = await client.request_permission(
+        session_id="s1",
+        tool_call=_make_tool_call("edit"),
+        options=[_make_option("allow")],
+    )
+
+    assert resp.outcome.outcome == "selected"
+    assert resp.outcome.option_id == "allow"
+
+
+@pytest.mark.asyncio
+async def test_permission_hook_chain_survives_unexpected_exit_and_denies(
+    tmp_path: Path,
+) -> None:
+    """An earlier broken hook cannot prevent a later hook from denying."""
+    recorder = TranscriptRecorder("prompt")
+    client = AgentClient(
+        silent=True,
+        recorder=recorder,
+        permission_hooks=[
+            HookDefinition(name="broken", on="permission", run="exit 127"),
+            HookDefinition(name="deny", on="permission", run="exit 1"),
+        ],
+        project_root=tmp_path,
+    )
+
+    resp = await client.request_permission(
+        session_id="s1",
+        tool_call=_make_tool_call("edit"),
+        options=[_make_option("allow")],
+    )
+
+    assert resp.outcome.outcome == "cancelled"
+    assert recorder.permissions[-1]["outcome"] == "denied"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["edit", "execute"])
 async def test_auto_approve_still_allows_mutating_kinds_without_read_only(
     kind: str, tmp_path: Path
