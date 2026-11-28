@@ -617,3 +617,100 @@ def test_close_missing_session_exits_1(cli_env: Path, tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "not found" in result.output
+
+
+@pytest.mark.asyncio
+async def test_run_prompt_passes_actual_stop_reason_to_hooks_without_export(
+    cli_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from acpterm.hooks import HookDefinition, HookEvent
+
+    captured: list[HookEvent] = []
+
+    class _FakeAgent:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.session_id = "sid-1"
+
+        async def start(self, **_kwargs: Any) -> None:
+            pass
+
+        async def send_prompt(self, _prompt: str, **_kwargs: Any) -> str:
+            return "max_tokens"
+
+        async def stop(self) -> None:
+            pass
+
+    async def _fake_run_hooks(
+        event: HookEvent, _hooks: list[HookDefinition], verbose: bool = False
+    ) -> list[str]:
+        captured.append(event)
+        return []
+
+    monkeypatch.setattr("acpterm.cli.ACPAgent", _FakeAgent)
+    monkeypatch.setattr("acpterm.hooks.run_hooks", _fake_run_hooks)
+
+    await _run_prompt(
+        agent_binary="fake-agent",
+        prompt_text="hello",
+        session_name="default",
+        persist=False,
+        project_root=tmp_path,
+        on_turn_end="echo ok",
+    )
+
+    assert len(captured) == 1
+    assert captured[0].stop_reason == "max_tokens"
+
+
+@pytest.mark.asyncio
+async def test_run_prompt_export_includes_chained_prompt_turns(
+    cli_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from acpterm.hooks import HookDefinition, HookEvent
+
+    export_path = tmp_path / "transcript.md"
+    seen_in_hook: list[str] = []
+
+    class _FakeAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            self.session_id = "sid-1"
+            self._recorder = kwargs.get("transcript_recorder")
+
+        async def start(self, **_kwargs: Any) -> None:
+            pass
+
+        async def send_prompt(self, prompt: str, **_kwargs: Any) -> str:
+            if self._recorder is not None:
+                self._recorder.add_message(f"Reply to: {prompt}\n")
+                self._recorder.set_stop_reason("end_turn")
+            return "end_turn"
+
+        async def stop(self) -> None:
+            pass
+
+    async def _fake_run_hooks(
+        event: HookEvent, _hooks: list[HookDefinition], verbose: bool = False
+    ) -> list[str]:
+        assert event.transcript_path == export_path
+        seen_in_hook.append(export_path.read_text(encoding="utf-8"))
+        return ["follow up"]
+
+    monkeypatch.setattr("acpterm.cli.ACPAgent", _FakeAgent)
+    monkeypatch.setattr("acpterm.hooks.run_hooks", _fake_run_hooks)
+
+    await _run_prompt(
+        agent_binary="fake-agent",
+        prompt_text="first prompt",
+        session_name="default",
+        persist=False,
+        project_root=tmp_path,
+        export=export_path,
+        chain_prompt="follow up",
+    )
+
+    assert len(seen_in_hook) == 1
+    assert "Reply to: first prompt" in seen_in_hook[0]
+
+    final_markdown = export_path.read_text(encoding="utf-8")
+    assert "Reply to: first prompt" in final_markdown
+    assert "Reply to: follow up" in final_markdown

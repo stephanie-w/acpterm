@@ -12,6 +12,7 @@ import typer
 from . import agent_cache, session_store
 from .acp_agent import ACPAgent, AgentClient
 from .output import SessionUpdate
+from .transcript import TranscriptRecorder
 
 
 app = typer.Typer(name="acpterm", no_args_is_help=True)
@@ -209,6 +210,26 @@ def callback(
     ctx.obj["mode"] = mode
 
 
+def _export_transcript(
+    export_path: Path, recorder: TranscriptRecorder, *, announce: bool = True
+) -> bool:
+    """Write the recorded Markdown transcript to disk."""
+    try:
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(recorder.to_markdown(), encoding="utf-8")
+        if announce:
+            _console.print(
+                f"\n[green][success][/green] Transcript exported to {export_path}"
+            )
+        return True
+    except Exception as e:
+        _console.print(
+            f"\n[red][error] Failed to export transcript: {e}[/red]",
+            style="bold",
+        )
+        return False
+
+
 async def _run_prompt(
     agent_binary: str,
     prompt_text: str,
@@ -229,7 +250,6 @@ async def _run_prompt(
 ) -> None:
     from .config import Config
     from .hooks import HookDefinition, HookEvent, run_hooks
-    from .transcript import TranscriptRecorder
 
     project_root = project_root or Path.cwd()
     recorder = TranscriptRecorder(prompt_text, resources=resources) if export else None
@@ -281,23 +301,15 @@ async def _run_prompt(
 
     try:
         start_time = time.monotonic()
-        await agent.send_prompt(prompt_text, resources=resources)
+        stop_reason = await agent.send_prompt(prompt_text, resources=resources)
         duration_seconds = time.monotonic() - start_time
         if recorder:
             recorder.set_duration(duration_seconds)
 
-        if export and recorder:
-            try:
-                export.parent.mkdir(parents=True, exist_ok=True)
-                export.write_text(recorder.to_markdown(), encoding="utf-8")
-                _console.print(
-                    f"\n[green][success][/green] Transcript exported to {export}"
-                )
-            except Exception as e:
-                _console.print(
-                    f"\n[red][error] Failed to export transcript: {e}[/red]",
-                    style="bold",
-                )
+        # Write initial transcript before turn_end hooks so hooks can inspect it.
+        exported_ok = False
+        if export and recorder and hooks:
+            exported_ok = _export_transcript(export, recorder, announce=False)
 
         # Collect turn_end hooks
         if hooks:
@@ -305,7 +317,7 @@ async def _run_prompt(
                 event_type="turn_end",
                 session_id=agent.session_id,
                 agent_name=agent_binary,
-                stop_reason=recorder.stop_reason if recorder else "end_turn",
+                stop_reason=stop_reason,
                 transcript_path=export,
                 prompt_text=prompt_text,
                 duration_seconds=duration_seconds,
@@ -317,6 +329,20 @@ async def _run_prompt(
                     f"\n[cyan][chain][/cyan] Sending chained prompt: '{next_prompt}'"
                 )
                 await agent.send_prompt(next_prompt)
+                if recorder:
+                    recorder.set_duration(time.monotonic() - start_time)
+                    if export:
+                        exported_ok = _export_transcript(
+                            export, recorder, announce=False
+                        )
+
+        if export and recorder:
+            if exported_ok:
+                _console.print(
+                    f"\n[green][success][/green] Transcript exported to {export}"
+                )
+            elif not hooks:
+                _export_transcript(export, recorder, announce=True)
     except (KeyboardInterrupt, asyncio.CancelledError):
         _console.print(
             "\n[yellow]Interrupted. Cancelling agent execution gracefully...[/yellow]"
