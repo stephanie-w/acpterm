@@ -85,6 +85,8 @@ class ToolCallStartEvent:
     status: str | None
     name: str | None
     raw_input: Any | None
+    content_text: str | None = None
+    diff_operations: tuple[FileOperation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +331,7 @@ def normalize_session_update(update: SessionUpdate) -> SessionEvent | None:
 
     if session_update == "tool_call":
         tool_call = cast(acp_schema.ToolCallStart, update)
+        content = tool_call.content
         return ToolCallStartEvent(
             tool_call_id=tool_call.tool_call_id or "call_default",
             title=tool_call.title or "Unknown tool",
@@ -336,6 +339,12 @@ def normalize_session_update(update: SessionUpdate) -> SessionEvent | None:
             status=tool_call.status,
             name=tool_call.name,
             raw_input=tool_call.raw_input or None,
+            content_text=(
+                format_content_blocks(content, tool_kind=tool_call.kind)
+                if content
+                else None
+            ),
+            diff_operations=extract_diff_operations(content) if content else (),
         )
 
     if session_update == "tool_call_update":
