@@ -134,6 +134,17 @@ def _render_string(
     max_length: int | None = getattr(schema, "max_length", None)
     pattern: str | None = getattr(schema, "pattern", None)
 
+    compiled_pattern: re.Pattern[str] | None = None
+    if pattern:
+        try:
+            compiled_pattern = re.compile(pattern)
+        except re.error:
+            _log.warning(
+                "Invalid regex pattern %r for field %r; skipping validation",
+                pattern,
+                name,
+            )
+
     for _ in range(MAX_RETRIES):
         value = Prompt.ask(f"  {name}", default=default, console=_console)
         if not value and not required:
@@ -147,12 +158,12 @@ def _render_string(
         if value and max_length and len(value) > max_length:
             _console.print(f"  [red]Maximum length: {max_length}[/red]")
             continue
-        if value and pattern and not re.match(pattern, value):
+        if value and compiled_pattern and not compiled_pattern.search(value):
             _console.print(f"  [red]Must match pattern: {pattern}[/red]")
             continue
         return value
 
-    return default
+    return None if required else default
 
 
 def _render_select(
@@ -200,13 +211,15 @@ def _render_select(
             default=default_idx,
             console=_console,
         )
+        if choice is None and not required:
+            return default
         if choice is not None and 1 <= choice <= len(options):
             return options[choice - 1][0]
         _console.print(
             f"  [red]Please enter a number between 1 and {len(options)}[/red]"
         )
 
-    return default
+    return None if required else default
 
 
 # ── Integer ───────────────────────────────────────────────────────────────────
@@ -347,6 +360,8 @@ def _render_multi_select(
         return default
 
     if auto_accept:
+        if required and not default:
+            return None
         return default or []
 
     _console.print(_field_label(name, schema, required))
@@ -363,13 +378,18 @@ def _render_multi_select(
 
     for _ in range(MAX_RETRIES):
         raw = Prompt.ask("  Select", console=_console)
-        if not raw and not required:
+        raw = raw or ""
+        if not raw.strip() and not required:
             return default or []
 
         try:
             indices = [int(x.strip()) for x in raw.split(",") if x.strip()]
         except ValueError:
             _console.print("  [red]Enter numbers separated by commas[/red]")
+            continue
+
+        if required and not indices:
+            _console.print("  [red]This field is required[/red]")
             continue
 
         if any(i < 1 or i > len(options) for i in indices):
@@ -387,4 +407,4 @@ def _render_multi_select(
 
         return selected
 
-    return default or []
+    return None if required else (default or [])
