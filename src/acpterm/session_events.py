@@ -20,7 +20,6 @@ import json
 from typing import Any, cast
 
 from acp import schema as acp_schema
-from rich.markup import escape
 
 
 CONTENT_TRUNCATE_LEN = 300
@@ -196,7 +195,10 @@ def _format_diff_object(content: Any) -> str:
     path = getattr(content, "path", None)
     new_text = getattr(content, "new_text", None)
     if isinstance(path, str) and path and isinstance(new_text, str):
-        return _format_diff(path, getattr(content, "old_text", None), new_text)
+        old_text = getattr(content, "old_text", None)
+        if old_text is not None and not isinstance(old_text, str):
+            return ""
+        return _format_diff(path, old_text, new_text)
 
     changes = getattr(content, "changes", None)
     if not changes:
@@ -266,8 +268,7 @@ def format_content_blocks(
         # Handle terminal content references (type="terminal", terminal_id=...)
         if block.type == "terminal":
             terminal_id = block.terminal_id
-            label = escape(f"terminal {terminal_id or 'unknown'}")
-            parts.append(f"\\[{label}]")
+            parts.append(f"[terminal {terminal_id or 'unknown'}]")
             continue
 
         if hasattr(block, "content"):

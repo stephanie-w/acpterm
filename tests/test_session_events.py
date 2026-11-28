@@ -559,3 +559,38 @@ def test_tool_call_progress_renders_diff_in_output_and_transcript(
     assert "--- /repo/app.py" in markdown
     assert "+gamma" in markdown
     assert "FileEditToolCallContent(" not in markdown
+
+
+def test_extract_text_rejects_duck_typed_diff_with_non_str_old_text() -> None:
+    diff_obj = SimpleNamespace(
+        type="diff",
+        path="/repo/app.py",
+        old_text=123,
+        new_text="hello\n",
+    )
+    assert extract_text(diff_obj) == ""
+
+
+def test_render_session_event_escapes_rich_markup_in_content_text(
+    rendered: StringIO,
+) -> None:
+    diff = acp_schema.FileEditToolCallContent(
+        type="diff",
+        path="/repo/notes[red].txt",
+        old_text=None,
+        new_text="[bold]x[/bold]\n",
+    )
+    progress = acp_schema.ToolCallProgress(
+        tool_call_id="tc-markup",
+        title="Edit notes",
+        kind="edit",
+        status="completed",
+        content=[diff],
+    )
+    event = cast(ToolCallProgressEvent, normalize_session_update(progress))
+
+    output.render_session_event(event)
+    terminal = rendered.getvalue()
+
+    assert "/repo/notes[red].txt" in terminal
+    assert "+[bold]x[/bold]" in terminal

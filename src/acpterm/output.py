@@ -179,7 +179,7 @@ def render_session_event(event: SessionEvent) -> None:
                 indented = "\n".join(
                     f"  {line}" for line in event.content_text.splitlines()
                 )
-                _console.print(indented)
+                _console.print(indented, markup=False)
 
         case UsageEvent():
             _state._usage = {
