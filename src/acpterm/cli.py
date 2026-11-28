@@ -268,6 +268,15 @@ async def _run_prompt(
         _console.print(f"[red][error][/red] {e}")
         raise typer.Exit(code=1) from None
 
+    # Persist before the first turn so an interrupted or failed prompt keeps the session.
+    if persist and agent.session_id:
+        session_store.save(
+            agent_binary,
+            str(project_root.absolute()),
+            agent.session_id,
+            session_name,
+        )
+
     import time
 
     try:
@@ -277,13 +286,6 @@ async def _run_prompt(
         if recorder:
             recorder.set_duration(duration_seconds)
 
-        if persist and agent.session_id:
-            session_store.save(
-                agent_binary,
-                str(project_root.absolute()),
-                agent.session_id,
-                session_name,
-            )
         if export and recorder:
             try:
                 export.parent.mkdir(parents=True, exist_ok=True)
@@ -392,7 +394,7 @@ async def _fetch_and_cache_agent_info(
             _console.print("[dim]---[/dim]")
         co = resp.config_options
         modes = resp.modes
-        agent_cache.store(agent_binary, co, modes, commands_received)
+        agent_cache.store(agent_binary, co, modes, commands_received or None)
         sid = resp.session_id
         if sid:
             with contextlib.suppress(Exception):
@@ -400,6 +402,23 @@ async def _fetch_and_cache_agent_info(
     finally:
         await conn.close()
         await transport_ctx.__aexit__(None, None, None)
+
+
+def _refresh_cache_if_stale(ctx: typer.Context, agent_binary: str) -> None:
+    """Refresh cached agent info when stale, exiting cleanly on resolution errors."""
+    if agent_cache.is_fresh(agent_binary):
+        return
+    try:
+        _run_async(
+            _fetch_and_cache_agent_info(
+                agent_binary,
+                verbose=ctx.obj.get("verbose", False),
+                cwd=ctx.obj["cwd"],
+            )
+        )
+    except (ValueError, FileNotFoundError) as e:
+        _console.print(f"[red][error][/red] {e}")
+        raise typer.Exit(code=1) from None
 
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -412,14 +431,7 @@ def list_models(
     """List available models and show the currently selected one."""
     agent_binary = _require_agent(ctx)
 
-    if not agent_cache.is_fresh(agent_binary):
-        _run_async(
-            _fetch_and_cache_agent_info(
-                agent_binary,
-                verbose=ctx.obj.get("verbose", False),
-                cwd=ctx.obj["cwd"],
-            )
-        )
+    _refresh_cache_if_stale(ctx, agent_binary)
 
     config_options = agent_cache.get_config_options(agent_binary) or []
 
@@ -486,6 +498,8 @@ async def _set_model_on_agent(
     )
     try:
         await agent_obj.start(target=session_id, load_existing=True)
+        if agent_obj.session_id and agent_obj.session_id != session_id:
+            session_store.save(agent_binary, cwd, agent_obj.session_id, session_name)
         await agent_obj.set_model(model_id)
         # Update cache to keep track of current model selection
         agent_cache.update_model(agent_binary, model_id)
@@ -524,7 +538,10 @@ def set_model(
 
     _run_async(run())
 
-    # Always save to the default model configuration
+    if success is False:
+        raise typer.Exit(code=1)
+
+    # Persist only once the agent accepted the change, or when no session was active.
     from .config import Config
 
     saved = False
@@ -543,8 +560,6 @@ def set_model(
             f" model for agent '{agent_binary}' for future sessions."
         )
         raise typer.Exit(code=0)
-    elif not success:
-        raise typer.Exit(code=1)
     elif saved:
         typer.echo(
             f"Model set to '{model_id}' for session '{session_name}', and"
@@ -567,14 +582,7 @@ def list_modes(
     """List available modes and show the currently active one."""
     agent_binary = _require_agent(ctx)
 
-    if not agent_cache.is_fresh(agent_binary):
-        _run_async(
-            _fetch_and_cache_agent_info(
-                agent_binary,
-                verbose=ctx.obj.get("verbose", False),
-                cwd=ctx.obj["cwd"],
-            )
-        )
+    _refresh_cache_if_stale(ctx, agent_binary)
 
     modes = agent_cache.get_modes(agent_binary)
 
@@ -622,6 +630,8 @@ async def _set_mode_on_agent(
     )
     try:
         await agent_obj.start(target=session_id, load_existing=True)
+        if agent_obj.session_id and agent_obj.session_id != session_id:
+            session_store.save(agent_binary, cwd, agent_obj.session_id, session_name)
         result_mode = await agent_obj.set_mode(mode_id)
         if result_mode:
             agent_cache.update_mode(agent_binary, result_mode)
@@ -660,7 +670,10 @@ def set_mode(
 
     _run_async(run())
 
-    # Always save to the default mode configuration
+    if success is False:
+        raise typer.Exit(code=1)
+
+    # Persist only once the agent accepted the change, or when no session was active.
     from .config import Config
 
     saved = False
@@ -679,8 +692,6 @@ def set_mode(
             f" mode for agent '{agent_binary}' for future sessions."
         )
         raise typer.Exit(code=0)
-    elif not success:
-        raise typer.Exit(code=1)
     elif saved:
         typer.echo(
             f"Mode set to '{mode_id}' for session '{session_name}', and"
@@ -702,14 +713,7 @@ def list_commands(
     """List available slash commands from the agent cache."""
     agent_binary = _require_agent(ctx)
 
-    if not agent_cache.is_fresh(agent_binary):
-        _run_async(
-            _fetch_and_cache_agent_info(
-                agent_binary,
-                verbose=ctx.obj.get("verbose", False),
-                cwd=ctx.obj["cwd"],
-            )
-        )
+    _refresh_cache_if_stale(ctx, agent_binary)
 
     commands = agent_cache.get_commands(agent_binary)
 
@@ -916,6 +920,7 @@ def close_session(
         typer.echo(f"Session '{session_name}' closed and removed.")
     else:
         typer.echo(f"Session '{session_name}' not found for {agent_binary} in {cwd}")
+        raise typer.Exit(code=1)
 
 
 # ── top-level commands ────────────────────────────────────────────────────────
@@ -933,10 +938,14 @@ def _resolve_prompt_text(prompt: list[str] | None, file: Path | None) -> str:
         else:
             if not file.exists():
                 raise typer.BadParameter(f"File not found: {file}")
+            if file.is_dir():
+                raise typer.BadParameter(f"Path is a directory: {file}")
             parts.append(file.read_text(encoding="utf-8"))
-    # 2. Otherwise read from stdin if input is piped and prompt is empty
-    elif not prompt and not sys.stdin.isatty():
-        parts.append(sys.stdin.read())
+    # 2. Otherwise combine piped stdin with any positional prompt arguments
+    elif not sys.stdin.isatty():
+        stdin_text = sys.stdin.read()
+        if stdin_text.strip():
+            parts.append(stdin_text.rstrip())
 
     # 3. Append positional prompt arguments if any
     if prompt:

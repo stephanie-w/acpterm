@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime, timedelta, UTC
 import json
+import os
 from pathlib import Path
+import sys
+import tempfile
 from typing import Any
 
 from acp import schema as acp_schema
@@ -13,50 +17,85 @@ CACHE_TTL = timedelta(days=7)
 
 
 def _read() -> dict[str, Any]:
-    if CACHE_FILE.exists():
-        return json.loads(CACHE_FILE.read_text())
-    return {}
+    if not CACHE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        print(
+            f"Warning: Failed to read agent cache {CACHE_FILE}: {e}. Ignoring it.",
+            file=sys.stderr,
+        )
+        return {}
+    if not isinstance(data, dict):
+        print(
+            f"Warning: Agent cache {CACHE_FILE} does not contain a JSON object."
+            " Ignoring it.",
+            file=sys.stderr,
+        )
+        return {}
+    return data
 
 
 def _write(data: dict[str, Any]) -> None:
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE.write_text(json.dumps(data, indent=2))
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=CACHE_FILE.parent,
+            delete=False,
+        ) as tmp_file:
+            json.dump(data, tmp_file, indent=2)
+            tmp_path = Path(tmp_file.name)
+        os.replace(tmp_path, CACHE_FILE)
+    except BaseException:
+        if tmp_path is not None:
+            with suppress(OSError):
+                tmp_path.unlink()
+        raise
 
 
 def is_fresh(agent_name: str) -> bool:
     data = _read()
     entry = data.get(agent_name)
-    if not entry:
+    if not isinstance(entry, dict):
+        return False
+    refreshed_at = entry.get("refreshed_at")
+    if not isinstance(refreshed_at, str):
         return False
     try:
-        refreshed_at = datetime.fromisoformat(entry["refreshed_at"])
-    except (ValueError, KeyError):
+        refreshed = datetime.fromisoformat(refreshed_at)
+    except ValueError:
         return False
-    return datetime.now(UTC) - refreshed_at < CACHE_TTL
+    return datetime.now(UTC) - refreshed < CACHE_TTL
 
 
 def get_config_options(agent_name: str) -> list[dict[str, Any]] | None:
-    data = _read()
-    entry = data.get(agent_name)
+    entry = _get_entry(agent_name)
     if not entry:
         return None
     return entry.get("config_options")
 
 
 def get_modes(agent_name: str) -> dict[str, Any] | None:
-    data = _read()
-    entry = data.get(agent_name)
+    entry = _get_entry(agent_name)
     if not entry:
         return None
     return entry.get("modes")
 
 
 def get_commands(agent_name: str) -> list[dict[str, str]] | None:
-    data = _read()
-    entry = data.get(agent_name)
+    entry = _get_entry(agent_name)
     if not entry:
         return None
     return entry.get("commands")
+
+
+def _get_entry(agent_name: str) -> dict[str, Any] | None:
+    entry = _read().get(agent_name)
+    return entry if isinstance(entry, dict) else None
 
 
 ConfigOption = (
@@ -71,7 +110,9 @@ def store(
     commands: list[acp_schema.AvailableCommand] | None = None,
 ) -> None:
     data = _read()
-    existing = data.get(agent_name, {})
+    existing = data.get(agent_name)
+    if not isinstance(existing, dict):
+        existing = {}
 
     co_list: list[dict[str, Any]] = existing.get("config_options", [])
     if config_options is not None:
@@ -125,7 +166,7 @@ def store(
 def update_model(agent_name: str, model_id: str) -> None:
     """Update the cached current model value for an agent."""
     data = _read()
-    entry = data.get(agent_name)
+    entry = _get_entry(agent_name)
     if entry:
         config_options = entry.get("config_options", [])
         for opt in config_options:
@@ -138,7 +179,7 @@ def update_model(agent_name: str, model_id: str) -> None:
 def update_mode(agent_name: str, mode_id: str) -> None:
     """Update the cached current mode for an agent."""
     data = _read()
-    entry = data.get(agent_name)
+    entry = _get_entry(agent_name)
     if entry:
         modes = entry.get("modes")
         if modes:
@@ -151,7 +192,10 @@ def update_commands(
 ) -> None:
     """Update the cached commands list for an agent, creating an entry if needed."""
     data = _read()
-    entry = data.setdefault(agent_name, {})
+    entry = data.get(agent_name)
+    if not isinstance(entry, dict):
+        entry = {}
+        data[agent_name] = entry
     cmd_list: list[dict[str, str]] = []
     if commands:
         for cmd in commands:

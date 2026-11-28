@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+from acp import schema as acp_schema
 import pytest
+import typer
 from typer.testing import CliRunner
 
-from acpterm import session_store
+from acpterm import agent_cache, session_store
 from acpterm.cli import (
     _fetch_and_cache_agent_info,
+    _resolve_prompt_text,
+    _run_prompt,
+    _set_mode_on_agent,
+    _set_model_on_agent,
     app,
     complete_session,
 )
@@ -349,3 +356,264 @@ def test_readme_documents_cwd_option(cli_env: Path) -> None:
     readme = Path(__file__).parent.parent / "README.md"
 
     assert "`-C, --cwd <path>`" in readme.read_text(encoding="utf-8")
+
+
+class _FakePromptAgent:
+    """Minimal agent double whose prompt turn can fail on demand."""
+
+    prompt_exception: BaseException | None = None
+    session_id_after_start: str | None = "sid-new"
+
+    def __init__(self, **_kwargs: object) -> None:
+        self.session_id: str | None = None
+        self.cancelled = False
+        self.stopped = False
+
+    async def start(self, **_kwargs: object) -> None:
+        self.session_id = self.session_id_after_start
+
+    async def send_prompt(self, _prompt_text: str, **_kwargs: object) -> None:
+        if self.prompt_exception is not None:
+            raise self.prompt_exception
+
+    async def cancel(self) -> None:
+        self.cancelled = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exc_type", "expected_exit"),
+    [(KeyboardInterrupt, 130), (RuntimeError, None)],
+    ids=["interrupted", "failed_prompt"],
+)
+async def test_prompt_failure_still_persists_session(
+    cli_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exc_type: type[BaseException],
+    expected_exit: int | None,
+) -> None:
+    target = tmp_path / "target-repo"
+    target.mkdir()
+    monkeypatch.setattr("acpterm.cli.ACPAgent", _FakePromptAgent)
+    monkeypatch.setattr(_FakePromptAgent, "prompt_exception", exc_type("boom"))
+    monkeypatch.setattr("acpterm.cli.asyncio.sleep", AsyncMock())
+
+    call = _run_prompt(
+        "fake-agent",
+        "hello",
+        persist=True,
+        project_root=target,
+    )
+
+    if expected_exit is None:
+        with pytest.raises(RuntimeError):
+            await call
+    else:
+        with pytest.raises(typer.Exit) as exit_info:
+            await call
+        assert exit_info.value.exit_code == expected_exit
+
+    assert (
+        session_store.get("fake-agent", str(target.absolute()), "default") == "sid-new"
+    )
+
+
+class _FakeSetModelAgent:
+    def __init__(self, **_kwargs: object) -> None:
+        self.session_id: str | None = None
+
+    async def start(self, **_kwargs: object) -> None:
+        self.session_id = "sid-fallback"
+
+    async def set_model(self, _model_id: str) -> None:
+        pass
+
+    async def stop(self) -> None:
+        pass
+
+
+class _FakeSetModeAgent(_FakeSetModelAgent):
+    async def set_mode(self, _mode_id: str) -> str | None:
+        return _mode_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("setter", "agent_double"),
+    [
+        (_set_model_on_agent, _FakeSetModelAgent),
+        (_set_mode_on_agent, _FakeSetModeAgent),
+    ],
+    ids=["set_model", "set_mode"],
+)
+async def test_set_on_agent_persists_stale_id_fallback(
+    cli_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    setter: Any,
+    agent_double: type[Any],
+) -> None:
+    target = tmp_path / "target-repo"
+    target.mkdir()
+    cwd = str(target.resolve())
+    _save_session("fake-agent", target, "work", "sid-stale")
+    monkeypatch.setattr("acpterm.cli.ACPAgent", agent_double)
+
+    assert await setter("fake-agent", cwd, "work", "value") is True
+
+    assert session_store.get("fake-agent", cwd, "work") == "sid-fallback"
+
+
+@pytest.mark.parametrize(
+    ("command", "setter_name"),
+    [
+        (["models", "set", "gpt-test"], "_set_model_on_agent"),
+        (["modes", "set", "code"], "_set_mode_on_agent"),
+    ],
+    ids=["set_model", "set_mode"],
+)
+def test_rejected_default_not_persisted(
+    cli_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    setter_name: str,
+) -> None:
+    config_file = cli_env / "config.json"
+    config_file.write_text(
+        json.dumps({"agents": {"fake-agent": "fake-agent acp"}}), encoding="utf-8"
+    )
+    before = config_file.read_text(encoding="utf-8")
+    monkeypatch.setattr(f"acpterm.cli.{setter_name}", AsyncMock(return_value=False))
+
+    result = _invoke(["-a", "fake-agent", "-C", str(cli_env), *command])
+
+    assert result.exit_code == 1
+    assert config_file.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_cache_preserves_commands_without_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("acpterm.agent_cache.CACHE_FILE", tmp_path / "agent_cache.json")
+    target = tmp_path / "target-repo"
+    target.mkdir()
+    agent_cache.store(
+        "fake-agent",
+        commands=[acp_schema.AvailableCommand(name="compact", description="Summarize")],
+    )
+    conn = _FakeCachingConnection()
+    monkeypatch.setattr(
+        "acp.client.connection.ClientSideConnection", lambda *_a, **_k: conn
+    )
+    monkeypatch.setattr(
+        "acp.transports.spawn_stdio_transport", MagicMock(return_value=_FakeTransport())
+    )
+    monkeypatch.setattr(
+        "acpterm.config.resolve_agent_command", lambda _name: ["fake-agent"]
+    )
+    monkeypatch.setattr("acpterm.cli.asyncio.sleep", AsyncMock())
+
+    await _fetch_and_cache_agent_info("fake-agent", cwd=target)
+
+    assert agent_cache.get_commands("fake-agent") == [
+        {"name": "compact", "description": "Summarize"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("command", "error"),
+    [
+        (["models", "list"], ValueError("no command configured")),
+        (["modes", "list"], ValueError("no command configured")),
+        (["commands", "list"], ValueError("no command configured")),
+        (["models", "list"], FileNotFoundError("agent binary missing")),
+        (["modes", "list"], FileNotFoundError("agent binary missing")),
+        (["commands", "list"], FileNotFoundError("agent binary missing")),
+    ],
+    ids=[
+        "models_value",
+        "modes_value",
+        "commands_value",
+        "models_missing",
+        "modes_missing",
+        "commands_missing",
+    ],
+)
+def test_resolution_error_exits_1(
+    cli_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    error: Exception,
+) -> None:
+    target = tmp_path / "target-repo"
+    target.mkdir()
+    monkeypatch.setattr("acpterm.cli.agent_cache.is_fresh", lambda _agent: False)
+    monkeypatch.setattr(
+        "acpterm.cli._fetch_and_cache_agent_info", AsyncMock(side_effect=error)
+    )
+
+    result = _invoke(["-a", "fake-agent", "-C", str(target), *command])
+
+    assert result.exit_code == 1
+    assert str(error) in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("stdin_text", ["piped line\n", ""], ids=["piped", "empty"])
+def test_stdin_combined_with_positional_prompt(
+    monkeypatch: pytest.MonkeyPatch, stdin_text: str
+) -> None:
+    monkeypatch.setattr(
+        "sys.stdin", SimpleNamespace(read=lambda: stdin_text, isatty=lambda: False)
+    )
+
+    resolved = _resolve_prompt_text(["Review this function"], None)
+
+    expected = (
+        "piped line\nReview this function" if stdin_text else "Review this function"
+    )
+    assert resolved == expected
+
+
+def test_prompt_file_directory_exits_2(
+    cli_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target-repo"
+    target.mkdir()
+    run_prompt = AsyncMock()
+    monkeypatch.setattr("acpterm.cli._run_prompt", run_prompt)
+
+    result = _invoke(
+        ["-a", "fake-agent", "-C", str(target), "prompt", "--file", str(tmp_path)]
+    )
+
+    assert result.exit_code == 2
+    assert "directory" in result.output.lower()
+    run_prompt.assert_not_awaited()
+
+
+def test_close_missing_session_exits_1(cli_env: Path, tmp_path: Path) -> None:
+    target = tmp_path / "target-repo"
+    target.mkdir()
+
+    result = _invoke(
+        [
+            "-a",
+            "fake-agent",
+            "-C",
+            str(target),
+            "sessions",
+            "close",
+            "nonexistent",
+        ]
+    )
+
+    assert result.exit_code == 1
+    assert "not found" in result.output

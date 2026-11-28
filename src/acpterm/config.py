@@ -42,7 +42,8 @@ class Config(BaseModel):
         Falls back to the bare agent binary name if found on PATH.
 
         Raises:
-            ValueError: If agent_name is not registered in config.json and not found on PATH.
+            ValueError: If agent_name is not registered in config.json and not found on PATH,
+                or if the configured command resolves to no arguments.
         """
         if agent_name in self.agents:
             command_str = self.agents[agent_name]
@@ -58,7 +59,14 @@ class Config(BaseModel):
                 )
                 raise ValueError(msg)
             command_str = agent_name
-        return shlex.split(command_str)
+        command_parts = shlex.split(command_str)
+        if not command_parts:
+            msg = (
+                f"Configured command for agent '{agent_name}' in {CONFIG_FILE} is empty. "
+                f'Set "agents": {{"{agent_name}": "<command>"}} to a non-empty command.'
+            )
+            raise ValueError(msg)
+        return command_parts
 
     def get_default_model(self, agent_name: str) -> str | None:
         """Get the configured default model for the agent."""
