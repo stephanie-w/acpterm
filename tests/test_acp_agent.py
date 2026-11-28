@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from acp.exceptions import RequestError
 import pytest
 from rich.console import Console
 
+from acpterm import output
 from acpterm.acp_agent import (
     _has_model_config_option,
     _is_method_not_found,
@@ -21,6 +23,10 @@ from acpterm.acp_agent import (
 )
 from acpterm.cli import _fetch_and_cache_agent_info
 from acpterm.hooks import HookDefinition
+from acpterm.session_events import (
+    MessageChunkEvent,
+    ThoughtChunkEvent,
+)
 from acpterm.transcript import TranscriptRecorder
 
 
@@ -1001,6 +1007,113 @@ async def test_send_prompt_requires_started_agent(
 
     with pytest.raises(RuntimeError, match="Agent not started"):
         await agent.send_prompt("hello")
+
+
+@pytest.mark.asyncio
+async def test_start_twice_redisplays_mode_and_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _FakeConnection()
+    conn.initialize.return_value = _init_response()
+    conn.new_session.return_value = acp_schema.NewSessionResponse(
+        session_id="fresh",
+        modes=acp_schema.SessionModeState(
+            current_mode_id="build",
+            available_modes=[acp_schema.SessionMode(id="build", name="Build")],
+        ),
+        config_options=[
+            _select_option(
+                "model",
+                current_value="gpt-5",
+                options=[
+                    acp_schema.SessionConfigSelectOption(value="gpt-5", name="GPT-5")
+                ],
+            )
+        ],
+    )
+    _install_start_harness(monkeypatch, conn)
+    stream = StringIO()
+    monkeypatch.setattr(
+        output,
+        "_console",
+        Console(
+            file=stream,
+            width=200,
+            force_terminal=False,
+            color_system=None,
+            highlight=False,
+        ),
+    )
+
+    agent = ACPAgent(project_root=tmp_path, silent=False)
+    await agent.start(load_existing=False)
+    await agent.start(load_existing=False)
+
+    text = stream.getvalue()
+    assert text.count("[mode] build") == 2
+    assert text.count("[model] gpt-5") == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "events",
+    [
+        pytest.param(
+            [ThoughtChunkEvent(message_id="m1", text="thinking")], id="thought"
+        ),
+        pytest.param(
+            [MessageChunkEvent(message_id="m1", text="buffered")], id="message"
+        ),
+        pytest.param(
+            [
+                ThoughtChunkEvent(message_id="m1", text="thinking"),
+                MessageChunkEvent(message_id="m2", text="buffered"),
+            ],
+            id="both",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(RuntimeError("boom"), id="runtime"),
+        pytest.param(asyncio.CancelledError(), id="cancelled"),
+    ],
+)
+async def test_send_prompt_cleans_up_stream_state_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[Any],
+    error: BaseException,
+) -> None:
+    agent, conn = _agent_with_conn()
+    stream = StringIO()
+    monkeypatch.setattr(
+        output,
+        "_console",
+        Console(
+            file=stream,
+            width=200,
+            force_terminal=False,
+            color_system=None,
+            highlight=False,
+        ),
+    )
+    output.reset_state()
+
+    async def fail_prompt(*_args: object, **_kwargs: object) -> None:
+        for event in events:
+            output.render_session_event(event)
+        raise error
+
+    conn.prompt = AsyncMock(side_effect=fail_prompt)
+
+    with pytest.raises(type(error)):
+        await agent.send_prompt("prompt")
+
+    assert output._state.in_stream is False
+    assert output._state._md_buffer == {}
+    if any(isinstance(event, MessageChunkEvent) for event in events):
+        assert "buffered" in stream.getvalue()
 
 
 def test_transcript_recorder_to_markdown_with_token_usage() -> None:

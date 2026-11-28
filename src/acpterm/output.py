@@ -38,9 +38,11 @@ __all__ = [
     "_extract_text",
     "_format_content_blocks",
     "display_initial_session_info",
+    "flush_output",
     "format_session_update",
     "format_stop_reason",
     "render_session_event",
+    "reset_state",
 ]
 
 SessionResponse = (
@@ -71,6 +73,9 @@ def _tag(label: str, style: str | None = None) -> str:
 
 class _State:
     def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
         self.msg_id: str | None = None
         self.update_type: str | None = None
         self.in_stream: bool = False
@@ -78,8 +83,8 @@ class _State:
         self._md_buffer: dict[str, list[str]] = {}
         self._last_md_msg_id: str | None = None
         self._usage: dict[str, Any] | None = None
-        self._model_displayed: bool = False
-        self._mode_displayed: bool = False
+        self._displayed_model: str | None = None
+        self._displayed_mode: str | None = None
 
     def end_stream(self) -> None:
         if self.in_stream:
@@ -119,6 +124,17 @@ class _State:
 _state = _State()
 
 
+def reset_state() -> None:
+    """Reset all streaming display state for a new agent run."""
+    _state.reset()
+
+
+def flush_output() -> None:
+    """End any active inline stream and render buffered Markdown."""
+    _state.end_stream()
+    _state.flush_md()
+
+
 def _format_content_blocks(content_blocks: list[ToolContentBlock]) -> str:
     """Render tool content blocks using the current terminal tool kind.
 
@@ -134,6 +150,7 @@ def render_session_event(event: SessionEvent) -> None:
         case ThoughtChunkEvent():
             if not event.text:
                 return
+            _state.flush_md()
             if _state.begin_stream(event.message_id):
                 _console.print(event.text, end="")
                 return
@@ -189,14 +206,18 @@ def render_session_event(event: SessionEvent) -> None:
             }
 
         case CurrentModeEvent():
-            if event.current_mode_id and not _state._mode_displayed:
-                _state._mode_displayed = True
-                _console.print(f"{_tag('mode', 'dim')} {escape(event.current_mode_id)}")
+            mode = event.current_mode_id
+            if mode and mode != _state._displayed_mode:
+                flush_output()
+                _state._displayed_mode = mode
+                _console.print(f"{_tag('mode', 'dim')} {escape(mode)}")
 
         case ModelConfigEvent():
-            if event.model and not _state._model_displayed:
-                _state._model_displayed = True
-                _console.print(f"{_tag('model', 'dim')} {escape(event.model)}")
+            model = event.model
+            if model and model != _state._displayed_model:
+                flush_output()
+                _state._displayed_model = model
+                _console.print(f"{_tag('model', 'dim')} {escape(model)}")
 
         case PlanEvent():
             _state.end_stream()
@@ -238,35 +259,33 @@ def display_initial_session_info(session_response: SessionResponse) -> None:
     current_mode_id = (
         session_response.modes.current_mode_id if session_response.modes else None
     )
-    if current_mode_id and not _state._mode_displayed:
-        _state._mode_displayed = True
-        _console.print(f"{_tag('mode', 'dim')} {escape(current_mode_id)}")
+    if current_mode_id:
+        render_session_event(CurrentModeEvent(current_mode_id=current_mode_id))
 
     # Print model if present in config_options
+    model_from_config = False
     config_options = session_response.config_options
     if config_options:
         for opt in config_options:
             if opt.id == "model":
                 model = opt.current_value
-                if model and not _state._model_displayed:
-                    _state._model_displayed = True
-                    _console.print(f"{_tag('model', 'dim')} {escape(str(model))}")
+                if model:
+                    model_from_config = True
+                    render_session_event(ModelConfigEvent(model=str(model)))
                 break
 
     # Support metadata fallback for opencode
     meta = session_response.field_meta
-    if meta and isinstance(meta, dict):
+    if not model_from_config and meta and isinstance(meta, dict):
         opencode = meta.get("opencode")
         if isinstance(opencode, dict):
             model = opencode.get("modelId") or opencode.get("model_id")
-            if model and not _state._model_displayed:
-                _state._model_displayed = True
-                _console.print(f"{_tag('model', 'dim')} {escape(str(model))}")
+            if model:
+                render_session_event(ModelConfigEvent(model=str(model)))
 
 
 def format_stop_reason(stop_reason: str, usage: dict[str, Any] | None = None) -> None:
-    _state.end_stream()
-    _state.flush_md()
+    flush_output()
     _print_usage(usage=usage)
     _console.print(f"{_tag('done', 'dim')} {stop_reason}")
 

@@ -8,17 +8,19 @@ import pytest
 from rich.console import Console
 
 from acpterm import output
+from acpterm.session_events import (
+    CurrentModeEvent,
+    MessageChunkEvent,
+    ModelConfigEvent,
+    ThoughtChunkEvent,
+)
 
 
 @pytest.fixture(autouse=True)
 def _reset_state() -> Any:
-    output._state._usage = None
-    output._state._mode_displayed = False
-    output._state._model_displayed = False
+    output.reset_state()
     yield
-    output._state._usage = None
-    output._state._mode_displayed = False
-    output._state._model_displayed = False
+    output.reset_state()
 
 
 @pytest.fixture
@@ -322,3 +324,140 @@ def test_format_stop_reason_ignores_only_malformed_tokens(rendered: StringIO) ->
     )
 
     assert "[tokens] 100 tokens (input: 100)" in rendered.getvalue()
+
+
+def test_reset_state_clears_all_display_state() -> None:
+    state = output._state
+    state.msg_id = "msg-1"
+    state.update_type = "agent_thought_chunk"
+    state.in_stream = True
+    state.tool_kind = "execute"
+    state._md_buffer = {"msg-1": ["buffered"]}
+    state._last_md_msg_id = "msg-1"
+    state._usage = {"used": 1}
+    state._displayed_model = "gpt-5"
+    state._displayed_mode = "build"
+
+    output.reset_state()
+
+    assert state.msg_id is None
+    assert state.update_type is None
+    assert state.in_stream is False
+    assert state.tool_kind is None
+    assert state._md_buffer == {}
+    assert state._last_md_msg_id is None
+    assert state._usage is None
+    assert state._displayed_model is None
+    assert state._displayed_mode is None
+
+
+def test_current_mode_dedupes_and_tracks_value_changes(rendered: StringIO) -> None:
+    output.render_session_event(CurrentModeEvent(current_mode_id="build"))
+    output.render_session_event(CurrentModeEvent(current_mode_id="build"))
+    assert rendered.getvalue().count("[mode] build") == 1
+
+    output.render_session_event(CurrentModeEvent(current_mode_id="plan"))
+    output.render_session_event(CurrentModeEvent(current_mode_id="build"))
+
+    text = rendered.getvalue()
+    assert text.count("[mode] build") == 2
+    assert text.count("[mode] plan") == 1
+    assert text.index("[mode] plan") < text.rindex("[mode] build")
+
+
+def test_model_config_dedupes_and_tracks_value_changes(rendered: StringIO) -> None:
+    output.render_session_event(ModelConfigEvent(model="gpt-5"))
+    output.render_session_event(ModelConfigEvent(model="gpt-5"))
+    assert rendered.getvalue().count("[model] gpt-5") == 1
+
+    output.render_session_event(ModelConfigEvent(model="claude-sonnet"))
+    output.render_session_event(ModelConfigEvent(model="gpt-5"))
+
+    text = rendered.getvalue()
+    assert text.count("[model] gpt-5") == 2
+    assert text.count("[model] claude-sonnet") == 1
+    assert text.index("[model] claude-sonnet") < text.rindex("[model] gpt-5")
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        CurrentModeEvent(current_mode_id=None),
+        CurrentModeEvent(current_mode_id=""),
+        ModelConfigEvent(model=None),
+        ModelConfigEvent(model=""),
+    ],
+)
+def test_empty_mode_or_model_is_not_displayed(
+    rendered: StringIO, event: CurrentModeEvent | ModelConfigEvent
+) -> None:
+    output.render_session_event(event)
+
+    assert rendered.getvalue() == ""
+
+
+def test_display_initial_session_info_prefers_config_model_over_field_meta(
+    rendered: StringIO,
+) -> None:
+    response = acp_schema.NewSessionResponse(
+        session_id="session-1",
+        config_options=[
+            acp_schema.SessionConfigOptionSelect(
+                id="model",
+                name="Model",
+                current_value="gpt-5",
+                options=[
+                    acp_schema.SessionConfigSelectOption(value="gpt-5", name="GPT-5")
+                ],
+            )
+        ],
+        field_meta={"opencode": {"modelId": "fallback"}},
+    )
+
+    output.display_initial_session_info(response)
+
+    text = rendered.getvalue()
+    assert text.count("[model] gpt-5") == 1
+    assert "fallback" not in text
+
+
+def test_thought_chunk_flushes_buffered_markdown_first(rendered: StringIO) -> None:
+    output.render_session_event(MessageChunkEvent(message_id="m1", text="hello"))
+    output.render_session_event(ThoughtChunkEvent(message_id="m2", text="hmm"))
+
+    text = rendered.getvalue()
+    assert text.index("hello") < text.index("[thinking] hmm")
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        (CurrentModeEvent(current_mode_id="plan"), "[mode] plan"),
+        (ModelConfigEvent(model="gpt-5"), "[model] gpt-5"),
+    ],
+)
+def test_changed_status_flushes_active_thought_stream(
+    rendered: StringIO, event: CurrentModeEvent | ModelConfigEvent, expected: str
+) -> None:
+    output.render_session_event(ThoughtChunkEvent(message_id="m1", text="hmm"))
+    output.render_session_event(event)
+
+    text = rendered.getvalue()
+    assert text.index("hmm\n") < text.index(expected)
+
+
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        (CurrentModeEvent(current_mode_id="plan"), "[mode] plan"),
+        (ModelConfigEvent(model="gpt-5"), "[model] gpt-5"),
+    ],
+)
+def test_changed_status_flushes_buffered_message_markdown(
+    rendered: StringIO, event: CurrentModeEvent | ModelConfigEvent, expected: str
+) -> None:
+    output.render_session_event(MessageChunkEvent(message_id="m1", text="hello"))
+    output.render_session_event(event)
+
+    text = rendered.getvalue()
+    assert text.index("hello") < text.index(expected)

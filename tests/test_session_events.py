@@ -36,17 +36,9 @@ from acpterm.transcript import TranscriptRecorder
 
 @pytest.fixture(autouse=True)
 def _reset_output_state() -> Any:
-    output._state._usage = None
-    output._state._mode_displayed = False
-    output._state._model_displayed = False
-    output._state.in_stream = False
-    output._state.tool_kind = None
+    output.reset_state()
     yield
-    output._state._usage = None
-    output._state._mode_displayed = False
-    output._state._model_displayed = False
-    output._state.in_stream = False
-    output._state.tool_kind = None
+    output.reset_state()
 
 
 @pytest.fixture
