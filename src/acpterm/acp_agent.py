@@ -21,15 +21,18 @@ from rich.prompt import Confirm
 from .config import resolve_agent_command
 from .hooks import HookDefinition
 from .output import (
-    _state,
     _tag,
     display_initial_session_info,
+    flush_output,
     format_stop_reason,
     render_session_event,
+    reset_state,
     SessionResponse,
 )
 from .session_events import (
     AvailableCommandsEvent,
+    CurrentModeEvent,
+    ModelConfigEvent,
     normalize_session_update,
     SessionEvent,
     SessionEventObserver,
@@ -541,6 +544,9 @@ class ACPAgent:
     ) -> None:
         from .auth import has_auth_configured
 
+        if not self._silent:
+            reset_state()
+
         auth_caps = None
         if has_auth_configured(self.agent_binary):
             auth_caps = acp_schema.AuthCapabilities(terminal=False)
@@ -704,8 +710,7 @@ class ACPAgent:
                 try:
                     await self.set_model(model_to_set)
                     if not self._silent:
-                        _console.print(f"[dim]\\[model][/dim] {model_to_set}")
-                        _state._model_displayed = True
+                        render_session_event(ModelConfigEvent(model=model_to_set))
                 except Exception as e:
                     # Do not fail start if setting the model fails (e.g. unsupported option/method)
                     if not self._silent:
@@ -746,8 +751,9 @@ class ACPAgent:
                 try:
                     await self.set_mode(mode_to_set)
                     if not self._silent:
-                        _console.print(f"[dim]\\[mode][/dim] {mode_to_set}")
-                        _state._mode_displayed = True
+                        render_session_event(
+                            CurrentModeEvent(current_mode_id=mode_to_set)
+                        )
                 except Exception as e:
                     # Do not fail start if setting the mode fails (e.g. unsupported option/method)
                     if not self._silent:
@@ -787,18 +793,21 @@ class ACPAgent:
                     )
                 )
 
-        resp = await self._conn.prompt(
-            self._session_id,
-            blocks,
-        )
-        stop_reason = str(resp.stop_reason)
-        usage = _extract_usage_tokens(getattr(resp, "usage", None))
-        format_stop_reason(stop_reason, usage=usage)
-        if self._transcript_recorder:
-            self._transcript_recorder.set_stop_reason(stop_reason)
-            if usage:
-                self._transcript_recorder.set_usage(usage)
-        return stop_reason
+        try:
+            resp = await self._conn.prompt(
+                self._session_id,
+                blocks,
+            )
+            stop_reason = str(resp.stop_reason)
+            usage = _extract_usage_tokens(getattr(resp, "usage", None))
+            format_stop_reason(stop_reason, usage=usage)
+            if self._transcript_recorder:
+                self._transcript_recorder.set_stop_reason(stop_reason)
+                if usage:
+                    self._transcript_recorder.set_usage(usage)
+            return stop_reason
+        finally:
+            flush_output()
 
     async def cancel(self) -> bool:
         if self._conn is None or self._session_id is None:
