@@ -13,8 +13,10 @@ standard library, so it stays strictly below ``output``, ``transcript``, and
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import difflib
+import json
 from typing import Any, cast
 
 from acp import schema as acp_schema
@@ -22,6 +24,7 @@ from rich.markup import escape
 
 
 CONTENT_TRUNCATE_LEN = 300
+DIFF_MAX_LINES = 50
 
 SessionUpdate = (
     acp_schema.UserMessageChunk
@@ -152,10 +155,94 @@ type SessionEvent = (
 type SessionEventObserver = Callable[[SessionEvent], None]
 
 
+def _format_diff(path: str, old_text: str | None, new_text: str) -> str:
+    """Render a file edit as a plain-text unified diff.
+
+    ``old_text is None`` marks a new file, matching ACP's ``Diff`` semantics.
+    Output is capped so large edits stay readable in terminals and transcripts.
+    """
+    if old_text is None:
+        if not new_text:
+            return f"create {path} (empty file)"
+        lines = list(
+            difflib.unified_diff(
+                [],
+                new_text.splitlines(),
+                fromfile="/dev/null",
+                tofile=path,
+                lineterm="",
+            )
+        )
+    else:
+        if old_text == new_text:
+            return f"diff {path} (no changes)"
+        lines = list(
+            difflib.unified_diff(
+                old_text.splitlines(),
+                new_text.splitlines(),
+                fromfile=path,
+                tofile=path,
+                lineterm="",
+            )
+        )
+    if len(lines) > DIFF_MAX_LINES:
+        remaining = len(lines) - DIFF_MAX_LINES
+        lines = [*lines[:DIFF_MAX_LINES], f"... ({remaining} more lines)"]
+    return "\n".join(lines)
+
+
+def _format_diff_object(content: Any) -> str:
+    """Render a duck-typed v1/v2 diff object that is not an ACP schema class."""
+    path = getattr(content, "path", None)
+    new_text = getattr(content, "new_text", None)
+    if isinstance(path, str) and path and isinstance(new_text, str):
+        return _format_diff(path, getattr(content, "old_text", None), new_text)
+
+    changes = getattr(content, "changes", None)
+    if not changes:
+        return ""
+    lines: list[str] = []
+    for change in changes:
+        change_path = getattr(change, "path", None)
+        if change_path:
+            operation = getattr(change, "operation", None) or "modify"
+            lines.append(f"{operation} {change_path}")
+    return "\n".join(lines)
+
+
+def _extract_mapping_text(content: Mapping[Any, Any]) -> str:
+    """Extract text from a mapping content block, including diff payloads."""
+    has_snake_diff_keys = "path" in content and "new_text" in content
+    has_camel_diff_keys = "path" in content and "newText" in content
+    if content.get("type") == "diff" or has_snake_diff_keys or has_camel_diff_keys:
+        path = content.get("path")
+        new_text = content.get("new_text", content.get("newText"))
+        old_text = content.get("old_text", content.get("oldText"))
+        if not isinstance(path, str) or not path or not isinstance(new_text, str):
+            return ""
+        if old_text is not None and not isinstance(old_text, str):
+            return ""
+        return _format_diff(path, old_text, new_text)
+
+    nested = content.get("content")
+    if nested is not None:
+        return extract_text(nested)
+    text_value = content.get("text")
+    if text_value is not None:
+        return str(text_value)
+    return ""
+
+
 def extract_text(content: Any) -> str:
     """Extract plain text from an ACP content block."""
     if isinstance(content, acp_schema.TextContentBlock):
         return content.text or ""
+    if isinstance(content, acp_schema.Diff):
+        return _format_diff(content.path, content.old_text, content.new_text)
+    if isinstance(content, Mapping):
+        return _extract_mapping_text(content)
+    if getattr(content, "type", None) == "diff":
+        return _format_diff_object(content)
     if hasattr(content, "content"):
         return extract_text(content.content)
     text_value = getattr(content, "text", None)
@@ -192,8 +279,8 @@ def format_content_blocks(
             if tool_kind == "read" and len(text) > CONTENT_TRUNCATE_LEN:
                 text = text[:CONTENT_TRUNCATE_LEN].rstrip() + "\n  ..."
             parts.append(text)
-        elif isinstance(inner, dict):
-            parts.append(str(inner))
+        elif isinstance(inner, Mapping):
+            parts.append(json.dumps(dict(inner), indent=2, sort_keys=True, default=str))
         else:
             parts.append(repr(inner))
     return "\n".join(parts)

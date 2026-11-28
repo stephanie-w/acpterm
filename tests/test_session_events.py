@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from io import StringIO
+import json
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -16,6 +17,7 @@ from acpterm.session_events import (
     AvailableCommandsEvent,
     CurrentModeEvent,
     extract_diff_operations,
+    extract_text,
     FileOperation,
     format_content_blocks,
     MessageChunkEvent,
@@ -350,3 +352,210 @@ async def test_available_commands_cache_errors_are_suppressed(
     client = AgentClient(agent_binary="fake-agent", silent=True)
 
     await client.session_update("session", _commands_update())
+
+
+_MODIFY_DIFF = acp_schema.FileEditToolCallContent(
+    path="/repo/app.py", old_text="alpha\nbeta\n", new_text="alpha\ngamma\n"
+)
+_CREATE_DIFF = acp_schema.FileEditToolCallContent(
+    path="/repo/new.py", old_text=None, new_text="one\ntwo\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("block", "headers", "removed", "added"),
+    [
+        (_MODIFY_DIFF, ("--- /repo/app.py", "+++ /repo/app.py"), "-beta", "+gamma"),
+        (_CREATE_DIFF, ("--- /dev/null", "+++ /repo/new.py"), None, "+one"),
+    ],
+)
+def test_file_edit_blocks_render_as_unified_diff(
+    block: acp_schema.FileEditToolCallContent,
+    headers: tuple[str, str],
+    removed: str | None,
+    added: str,
+) -> None:
+    for rendered in (extract_text(block), format_content_blocks([block])):
+        lines = rendered.splitlines()
+        assert tuple(lines[:2]) == headers
+        assert added in lines
+        if removed is not None:
+            assert removed in lines
+        assert "FileEditToolCallContent(" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("block", "expected"),
+    [
+        (
+            acp_schema.FileEditToolCallContent(
+                path="/repo/empty.py", old_text=None, new_text=""
+            ),
+            "create /repo/empty.py (empty file)",
+        ),
+        (
+            acp_schema.FileEditToolCallContent(
+                path="/repo/same.py", old_text="same\n", new_text="same\n"
+            ),
+            "diff /repo/same.py (no changes)",
+        ),
+    ],
+)
+def test_file_edit_blocks_summarize_empty_diffs(
+    block: acp_schema.FileEditToolCallContent, expected: str
+) -> None:
+    assert extract_text(block) == expected
+    assert format_content_blocks([block]) == expected
+
+
+def test_file_edit_blocks_truncate_large_diffs() -> None:
+    block = acp_schema.FileEditToolCallContent(
+        path="/repo/big.py",
+        old_text=None,
+        new_text="\n".join(f"line {number}" for number in range(80)),
+    )
+
+    lines = extract_text(block).splitlines()
+
+    assert len(lines) == 51
+    assert lines[2].startswith("@@")
+    assert lines[-1] == "... (33 more lines)"
+
+
+def test_v2_changes_diff_blocks_render_operations() -> None:
+    block = SimpleNamespace(
+        type="diff",
+        path=None,
+        changes=[
+            SimpleNamespace(operation="create", path="/repo/a.py"),
+            SimpleNamespace(operation="modify", path="/repo/b.py"),
+        ],
+    )
+
+    expected = "create /repo/a.py\nmodify /repo/b.py"
+
+    assert extract_text(block) == expected
+    assert format_content_blocks([cast(Any, block)]) == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [({"text": "plain"}, "plain"), ({"content": {"text": "nested"}}, "nested")],
+)
+def test_extract_text_reads_mapping_text_and_nested_content(
+    payload: dict[str, Any], expected: str
+) -> None:
+    assert extract_text(payload) == expected
+    block = SimpleNamespace(type="content", content=payload)
+    assert format_content_blocks([cast(Any, block)]) == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "headers", "removed", "added"),
+    [
+        (
+            {
+                "type": "diff",
+                "path": "/repo/new.py",
+                "old_text": None,
+                "new_text": "one\n",
+            },
+            ("--- /dev/null", "+++ /repo/new.py"),
+            None,
+            "+one",
+        ),
+        (
+            {"path": "/repo/new.py", "newText": "one\n"},
+            ("--- /dev/null", "+++ /repo/new.py"),
+            None,
+            "+one",
+        ),
+        (
+            {"path": "/repo/app.py", "oldText": "alpha\n", "newText": "beta\n"},
+            ("--- /repo/app.py", "+++ /repo/app.py"),
+            "-alpha",
+            "+beta",
+        ),
+    ],
+)
+def test_extract_text_reads_mapping_diff_payloads(
+    payload: dict[str, Any],
+    headers: tuple[str, str],
+    removed: str | None,
+    added: str,
+) -> None:
+    block = SimpleNamespace(type="content", content=payload)
+
+    rendered = format_content_blocks([cast(Any, block)])
+    lines = rendered.splitlines()
+
+    assert tuple(lines[:2]) == headers
+    assert added in lines
+    if removed is not None:
+        assert removed in lines
+    assert extract_text(payload) == rendered
+
+
+def test_format_content_blocks_renders_unknown_mappings_as_json() -> None:
+    payload = {"zeta": 1, "alpha": {"nested": [True, None]}}
+    block = SimpleNamespace(type="content", content=payload)
+
+    rendered = format_content_blocks([cast(Any, block)])
+
+    assert json.loads(rendered) == payload
+    assert rendered.startswith('{\n  "alpha"')
+    assert "{'zeta'" not in rendered
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"text": None},
+        {"content": None},
+        {"content": 42},
+        {"type": "diff", "path": "", "new_text": "x"},
+        {"type": "diff", "path": "/repo/x.py", "new_text": None},
+        {"path": "/repo/x.py", "new_text": 3},
+        {"path": "/repo/x.py", "newText": "x", "oldText": 7},
+    ],
+)
+def test_extract_text_rejects_invalid_mapping_payloads(payload: dict[str, Any]) -> None:
+    assert extract_text(payload) == ""
+
+
+@pytest.mark.parametrize("payload", [None, 42, [], ""])
+def test_extract_text_ignores_non_content_values(payload: Any) -> None:
+    assert extract_text(payload) == ""
+
+
+def test_tool_call_progress_renders_diff_in_output_and_transcript(
+    rendered: StringIO,
+) -> None:
+    progress = acp_schema.ToolCallProgress(
+        tool_call_id="tc-diff",
+        title="Edit app.py",
+        kind="edit",
+        status="completed",
+        content=[_MODIFY_DIFF],
+    )
+
+    event = cast(ToolCallProgressEvent, normalize_session_update(progress))
+
+    assert event.content_text is not None
+    assert "--- /repo/app.py" in event.content_text
+    assert "+gamma" in event.content_text
+    assert event.diff_operations == (FileOperation("modify", "/repo/app.py"),)
+
+    output.render_session_event(event)
+    terminal = rendered.getvalue()
+    assert "--- /repo/app.py" in terminal
+    assert "+gamma" in terminal
+    assert "FileEditToolCallContent(" not in terminal
+
+    recorder = TranscriptRecorder("prompt")
+    recorder.record_event(event)
+    markdown = recorder.to_markdown()
+    assert "--- /repo/app.py" in markdown
+    assert "+gamma" in markdown
+    assert "FileEditToolCallContent(" not in markdown
